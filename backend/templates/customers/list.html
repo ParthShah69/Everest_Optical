@@ -60,6 +60,44 @@
                             title="Create Order">
                             <i class="fas fa-shopping-cart"></i> Order
                         </a>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteCustomerModal{{ customer.id }}" title="Delete / Request Delete">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </div>
+
+                    <!-- Delete / Request Delete Modal -->
+                    <div class="modal fade text-start" id="deleteCustomerModal{{ customer.id }}" tabindex="-1" aria-hidden="true">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <form action="{{ url_for('customer.delete', id=customer.id) }}" method="POST">
+                                    <div class="modal-header bg-danger text-white">
+                                        <h5 class="modal-title">
+                                            <i class="fas fa-exclamation-triangle me-2"></i>
+                                            {% if current_user.is_admin %}Delete Customer{% else %}Request Customer Deletion{% endif %}
+                                        </h5>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        {% if current_user.is_admin %}
+                                        <p class="text-danger fw-bold">Are you sure you want to permanently delete customer <strong>{{ customer.name }}</strong>?</p>
+                                        <p class="small text-muted mb-0">This will also delete all associated prescriptions and orders.</p>
+                                        {% else %}
+                                        <p>Submit a deletion request for customer <strong>{{ customer.name }}</strong>. An Admin will review your request.</p>
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">Reason for Deletion <span class="text-danger">*</span></label>
+                                            <textarea class="form-control" name="reason" rows="3" required placeholder="Please explain why this customer should be deleted..."></textarea>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button type="submit" class="btn btn-danger">
+                                            {% if current_user.is_admin %}Delete Permanently{% else %}Submit Request{% endif %}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
                     </div>
                 </td>
             </tr>

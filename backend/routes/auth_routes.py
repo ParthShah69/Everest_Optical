@@ -2,6 +2,7 @@ import random
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
+from sqlalchemy.exc import OperationalError, DBAPIError
 from extensions import db, bcrypt
 from models.user import User
 
@@ -66,7 +67,19 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        user = User.query.filter_by(username=username).first()
+
+        # Retry once on stale connection (Neon/Render free tier wakes up)
+        user = None
+        for attempt in range(2):
+            try:
+                user = User.query.filter_by(username=username).first()
+                break
+            except (OperationalError, DBAPIError):
+                db.session.rollback()
+                if attempt == 1:
+                    flash('Server is waking up — please try again in a few seconds.', 'warning')
+                    return render_template('auth/login.html'), 503
+
         if user and bcrypt.check_password_hash(user.password_hash, password):
             login_user(user)
             flash('Login successful!', 'success')
@@ -282,3 +295,121 @@ def delete_user(id):
     db.session.commit()
     flash(f'User "{username}" deleted.', 'success')
     return redirect(url_for('auth.manage_users'))
+
+
+@auth_bp.route('/google')
+def google_login():
+    from flask import current_app
+    import urllib.parse
+    client_id = current_app.config.get('GOOGLE_CLIENT_ID')
+    if not client_id or client_id == 'YOUR_GOOGLE_CLIENT_ID':
+        # Demo mode if credentials not in env
+        demo_user = User.query.filter_by(username='google_user').first()
+        if not demo_user:
+            demo_user = User(
+                username='google_user',
+                email='staff@google-oauth-demo.com',
+                google_id='demo-google-id-12345',
+                role='staff'
+            )
+            db.session.add(demo_user)
+            db.session.commit()
+        login_user(demo_user)
+        flash('Logged in via Google OAuth (Demo Account). Add GOOGLE_CLIENT_ID to .env for Google login.', 'info')
+        return redirect(url_for('dashboard.index'))
+
+    redirect_uri = url_for('auth.google_callback', _external=True)
+    google_auth_url = (
+        "https://accounts.google.com/o/oauth2/v2/auth?" +
+        urllib.parse.urlencode({
+            'client_id': client_id,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': 'openid email profile',
+            'access_type': 'offline'
+        })
+    )
+    return redirect(google_auth_url)
+
+
+@auth_bp.route('/google/callback')
+def google_callback():
+    from flask import current_app
+    import requests
+    code = request.args.get('code')
+    if not code:
+        flash('Google login failed or cancelled.', 'danger')
+        return redirect(url_for('auth.login'))
+
+    client_id = current_app.config.get('GOOGLE_CLIENT_ID')
+    client_secret = current_app.config.get('GOOGLE_CLIENT_SECRET')
+    redirect_uri = url_for('auth.google_callback', _external=True)
+
+    try:
+        token_resp = requests.post('https://oauth2.googleapis.com/token', data={
+            'code': code,
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'redirect_uri': redirect_uri,
+            'grant_type': 'authorization_code'
+        }).json()
+
+        access_token = token_resp.get('access_token')
+        if not access_token:
+            flash('Failed to retrieve access token from Google.', 'danger')
+            return redirect(url_for('auth.login'))
+
+        user_info = requests.get('https://www.googleapis.com/oauth2/v2/userinfo', headers={
+            'Authorization': f'Bearer {access_token}'
+        }).json()
+
+        google_id = user_info.get('id')
+        email = user_info.get('email')
+        name = user_info.get('name') or (email.split('@')[0] if email else 'google_user')
+
+        user = User.query.filter((User.google_id == google_id) | (User.email == email)).first()
+        if not user:
+            username = name.lower().replace(' ', '_')
+            base_username = username
+            counter = 1
+            while User.query.filter_by(username=username).first():
+                username = f"{base_username}_{counter}"
+                counter += 1
+
+            user = User(
+                username=username,
+                email=email,
+                google_id=google_id,
+                role='staff'
+            )
+            db.session.add(user)
+            db.session.commit()
+        else:
+            if not user.google_id:
+                user.google_id = google_id
+                db.session.commit()
+
+        login_user(user)
+        flash(f'Successfully logged in as {user.username} via Google!', 'success')
+        return redirect(url_for('dashboard.index'))
+    except Exception as e:
+        flash(f'Google OAuth error: {str(e)}', 'danger')
+        return redirect(url_for('auth.login'))
+
+
+@auth_bp.route('/reset-database', methods=['POST'])
+@login_required
+def reset_database_route():
+    if not _admin_required():
+        return redirect(url_for('dashboard.index'))
+
+    try:
+        from reset_db import reset_database
+        reset_database()
+        flash('Database reset successfully! All transactional data cleared, Super Admin account preserved.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error resetting database: {str(e)}', 'danger')
+
+    return redirect(url_for('auth.manage_users'))
+

@@ -66,15 +66,31 @@ def log_update(mapper, connection, target):
             )
             db.session.add(log)
 
+import json
+
 def log_delete(mapper, connection, target):
     table_name = target.__tablename__
     user_id = get_current_user_id()
     
+    record_dict = {}
+    try:
+        state = inspect(target)
+        for attr in state.attrs:
+            # Skip relationships to avoid recursive calls
+            if attr.key in state.mapper.relationships.keys():
+                continue
+            val = attr.value
+            if val is not None:
+                record_dict[attr.key] = str(val)
+    except Exception:
+        record_dict = {'summary': str(target)}
+
     log = AuditLog(
         user_id=user_id,
         action='DELETE',
         table_name=table_name,
         record_id=target.id,
-        old_value=str(target)
+        old_value=json.dumps(record_dict, default=str)
     )
     db.session.add(log)
+

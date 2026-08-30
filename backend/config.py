@@ -13,15 +13,28 @@ class Config:
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # 1. & 4. SQLAlchemy engine options for DB stability (pool_pre_ping, pool_recycle, sslmode)
+    # SQLAlchemy engine options tuned for Neon/Render free tier (drops idle conns aggressively)
     SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,
-        'pool_recycle': 300,
+        'pool_pre_ping': True,      # validate connection before checkout
+        'pool_recycle': 280,        # recycle just under Neon's 300s idle limit
+        'pool_size': 5,
+        'max_overflow': 5,
+        'pool_timeout': 30,
         'connect_args': {
-            'sslmode': 'require'
+            'sslmode': 'require',
+            'connect_timeout': 10,
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 5,
         } if 'sqlite' not in SQLALCHEMY_DATABASE_URI else {}
     }
 
     # Resend Email API
     RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
     MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER', 'Optical ERP <onboarding@resend.dev>')
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
+    GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
+

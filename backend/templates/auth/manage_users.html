@@ -42,6 +42,48 @@
                 </form>
             </div>
         </div>
+
+        <!-- System Maintenance / Reset DB -->
+        <div class="card shadow border-danger mt-4">
+            <div class="card-header bg-danger text-white">
+                <h6 class="mb-0"><i class="fas fa-database me-2"></i>System Reset</h6>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-3">
+                    Reset transactional data (customers, orders, prescriptions, inventory, deletion requests, logs). The Super Admin account (admin / admin123) will be preserved.
+                </p>
+                <button type="button" class="btn btn-outline-danger w-100" data-bs-toggle="modal" data-bs-target="#resetDbModal">
+                    <i class="fas fa-undo me-1"></i> Reset Database
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset DB Modal -->
+    <div class="modal fade" id="resetDbModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form action="{{ url_for('auth.reset_database_route') }}" method="POST">
+                    <div class="modal-header bg-danger text-white">
+                        <h5 class="modal-title"><i class="fas fa-exclamation-triangle me-2"></i>Confirm Database Reset</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body text-start">
+                        <p class="text-danger fw-bold">Warning: This action will purge all test data from the system!</p>
+                        <ul class="small text-muted">
+                            <li>All Customers, Orders, & Prescriptions will be deleted.</li>
+                            <li>All Inventory items will be deleted.</li>
+                            <li>All non-admin Staff user accounts will be removed.</li>
+                            <li><strong>Super Admin (`admin`) will be preserved.</strong></li>
+                        </ul>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger"><i class="fas fa-power-off me-1"></i>Confirm & Reset Database</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <!-- User Table -->

@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h2><i class="fas fa-trash-alt me-2 text-danger"></i>Deletion Requests Review</h2>
+</div>
+
+<!-- Nav Tabs Filter -->
+<ul class="nav nav-pills mb-4">
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if status_filter == 'Pending' else '' }}" 
+           href="{{ url_for('deletion_request.index', status='Pending') }}">
+            <i class="fas fa-clock me-1"></i> Pending 
+            <span class="badge bg-warning text-dark ms-1">{{ pending_count }}</span>
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if status_filter == 'Approved' else '' }}" 
+           href="{{ url_for('deletion_request.index', status='Approved') }}">
+            <i class="fas fa-check-circle me-1"></i> Approved 
+            <span class="badge bg-success ms-1">{{ approved_count }}</span>
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if status_filter == 'Rejected' else '' }}" 
+           href="{{ url_for('deletion_request.index', status='Rejected') }}">
+            <i class="fas fa-times-circle me-1"></i> Rejected 
+            <span class="badge bg-danger ms-1">{{ rejected_count }}</span>
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if status_filter == 'all' else '' }}" 
+           href="{{ url_for('deletion_request.index', status='all') }}">
+            <i class="fas fa-list me-1"></i> All Requests 
+            <span class="badge bg-secondary ms-1">{{ total_count }}</span>
+        </a>
+    </li>
+</ul>
+
+<div class="card shadow">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-tasks me-2"></i>Requests List ({{ status_filter }})</h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>Entity</th>
+                        <th>Target Record</th>
+                        <th>Requested By</th>
+                        <th>Reason</th>
+                        <th>Requested At</th>
+                        <th>Status</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if requests.items %}
+                    {% for req in requests.items %}
+                    <tr>
+                        <td><strong>#{{ req.id }}</strong></td>
+                        <td>
+                            {% if req.entity_type == 'customer' %}
+                            <span class="badge bg-primary"><i class="fas fa-user me-1"></i>Customer</span>
+                            {% elif req.entity_type == 'order' %}
+                            <span class="badge bg-info text-dark"><i class="fas fa-shopping-cart me-1"></i>Order</span>
+                            {% elif req.entity_type == 'prescription' %}
+                            <span class="badge bg-purple text-white" style="background-color: #6f42c1;"><i class="fas fa-file-medical me-1"></i>Prescription</span>
+                            {% elif req.entity_type == 'inventory' %}
+                            <span class="badge bg-warning text-dark"><i class="fas fa-boxes me-1"></i>Inventory</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ req.entity_type }}</span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ req.entity_identifier }}</strong></td>
+                        <td>
+                            <i class="fas fa-user-circle me-1 text-muted"></i>
+                            {{ req.requested_by.username if req.requested_by else 'Unknown' }}
+                        </td>
+                        <td style="max-width: 250px;">
+                            <span class="text-break">{{ req.reason }}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{ req.created_at.strftime('%Y-%m-%d %H:%M') if req.created_at else 'N/A' }}</small>
+                        </td>
+                        <td>
+                            {% if req.status == 'Pending' %}
+                            <span class="badge bg-warning text-dark"><i class="fas fa-hourglass-half me-1"></i>Pending</span>
+                            {% elif req.status == 'Approved' %}
+                            <span class="badge bg-success"><i class="fas fa-check me-1"></i>Approved</span>
+                            {% elif req.status == 'Rejected' %}
+                            <span class="badge bg-danger"><i class="fas fa-times me-1"></i>Rejected</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if req.status == 'Pending' %}
+                            <button type="button" class="btn btn-sm btn-success me-1" data-bs-toggle="modal" data-bs-target="#approveModal{{ req.id }}">
+                                <i class="fas fa-check me-1"></i>Approve & Delete
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal{{ req.id }}">
+                                <i class="fas fa-times me-1"></i>Reject
+                            </button>
+                            {% else %}
+                            <small class="text-muted d-block">
+                                Reviewed by: {{ req.reviewed_by.username if req.reviewed_by else 'Admin' }}
+                            </small>
+                            {% if req.admin_notes %}
+                            <small class="text-muted fst-italic" title="{{ req.admin_notes }}">
+                                Note: {{ req.admin_notes[:30] }}{{ '...' if req.admin_notes|length > 30 else '' }}
+                            </small>
+                            {% endif %}
+                            {% endif %}
+
+                            <!-- Approve Modal -->
+                            <div class="modal fade text-start" id="approveModal{{ req.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <form action="{{ url_for('deletion_request.approve', id=req.id) }}" method="POST">
+                                            <div class="modal-header bg-danger text-white">
+                                                <h5 class="modal-title"><i class="fas fa-exclamation-triangle me-2"></i>Confirm Deletion Approval</h5>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p class="text-danger fw-bold">Are you sure you want to approve this deletion?</p>
+                                                <p>This will <strong>permanently delete</strong> {{ req.entity_type.capitalize() }}: <strong>{{ req.entity_identifier }}</strong> from the system.</p>
+                                                <div class="mb-3">
+                                                    <label class="form-label text-dark">Admin Notes (Optional)</label>
+                                                    <textarea class="form-control" name="admin_notes" rows="2" placeholder="Add approval remarks..."></textarea>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-danger"><i class="fas fa-trash-alt me-1"></i>Approve & Delete Permanently</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Reject Modal -->
+                            <div class="modal fade text-start" id="rejectModal{{ req.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <form action="{{ url_for('deletion_request.reject', id=req.id) }}" method="POST">
+                                            <div class="modal-header bg-secondary text-white">
+                                                <h5 class="modal-title"><i class="fas fa-times-circle me-2"></i>Reject Deletion Request</h5>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p>Reject deletion request for <strong>{{ req.entity_identifier }}</strong>.</p>
+                                                <div class="mb-3">
+                                                    <label class="form-label text-dark">Reason for Rejection (Optional)</label>
+                                                    <textarea class="form-control" name="admin_notes" rows="3" placeholder="Explain why this deletion is rejected..."></textarea>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-danger"><i class="fas fa-ban me-1"></i>Reject Request</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">
+                            <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
+                            No deletion requests found for status "<strong>{{ status_filter }}</strong>".
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if requests.pages > 1 %}
+<nav class="mt-4">
+    <ul class="pagination justify-content-center">
+        {% for p in range(1, requests.pages + 1) %}
+        <li class="page-item {{ 'active' if p == requests.page else '' }}">
+            <a class="page-link" href="{{ url_for('deletion_request.index', status=status_filter, page=p) }}">{{ p }}</a>
+        </li>
+        {% endfor %}
+    </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

@@ -73,6 +73,15 @@
                             <i class="fas fa-user-shield me-2"></i> Manage Users
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {{ 'active' if request.endpoint and 'deletion_request' in request.endpoint else '' }}"
+                            href="{{ url_for('deletion_request.index') }}">
+                            <i class="fas fa-trash-alt me-2"></i> Deletion Requests
+                            {% if pending_deletion_count and pending_deletion_count > 0 %}
+                            <span class="badge bg-warning text-dark ms-auto">{{ pending_deletion_count }}</span>
+                            {% endif %}
+                        </a>
+                    </li>
                 </ul>
                 {% endif %}
 

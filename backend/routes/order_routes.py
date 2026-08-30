@@ -152,3 +152,51 @@ def edit(id):
             flash(f'Error updating order: {str(e)}', 'danger')
 
     return render_template('orders/edit.html', order=order)
+
+@order_bp.route('/delete/<int:id>', methods=['POST'])
+@login_required
+def delete(id):
+    order = Order.query.get_or_404(id)
+    customer_name = order.customer.name if order.customer else "Unknown"
+    
+    if current_user.is_admin:
+        try:
+            db.session.delete(order)
+            db.session.commit()
+            flash(f'Order #{order.order_no} deleted permanently.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error deleting order: {str(e)}', 'danger')
+    else:
+        reason = request.form.get('reason', '').strip()
+        if not reason:
+            flash('Please provide a reason for deletion.', 'warning')
+            return redirect(url_for('order.index'))
+            
+        from models.deletion_request import DeletionRequest
+        
+        existing_req = DeletionRequest.query.filter_by(
+            entity_type='order', entity_id=order.id, status='Pending'
+        ).first()
+        
+        if existing_req:
+            flash(f'A deletion request for Order #{order.order_no} is already pending admin review.', 'info')
+            return redirect(url_for('order.index'))
+
+        del_req = DeletionRequest(
+            entity_type='order',
+            entity_id=order.id,
+            entity_identifier=f"Order #{order.order_no} (Customer: {customer_name})",
+            reason=reason,
+            requested_by_id=current_user.id
+        )
+        try:
+            db.session.add(del_req)
+            db.session.commit()
+            flash(f'Deletion request for Order #{order.order_no} submitted to admin.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error submitting deletion request: {str(e)}', 'danger')
+            
+    return redirect(url_for('order.index'))
+

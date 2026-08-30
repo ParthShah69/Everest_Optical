@@ -25,6 +25,7 @@
     <table class="table table-hover table-bordered mobile-cards">
         <thead class="table-dark">
             <tr>
+                <th style="width: 60px;">Image</th>
                 <th>Model Name</th>
                 <th>Brand</th>
                 <th>Type</th>
@@ -39,8 +40,18 @@
         <tbody>
             {% for item in items.items %}
             <tr class="{{ 'table-danger' if item.is_low_stock else '' }}">
+                <td data-label="Image" class="text-center">
+                    {% if item.image_path %}
+                    <img src="{{ url_for('static', filename=item.image_path.replace('static/', '')) }}" 
+                         class="rounded border p-1" style="width: 42px; height: 42px; object-fit: contain; background: #fff;" alt="Item">
+                    {% else %}
+                    <div class="rounded border d-inline-flex align-items-center justify-content-center bg-light" style="width: 42px; height: 42px;">
+                        <i class="fas fa-glasses text-secondary"></i>
+                    </div>
+                    {% endif %}
+                </td>
                 <td data-label="Model Name">
-                    {{ item.model_name }}
+                    <strong>{{ item.model_name }}</strong>
                     {% if item.is_low_stock %}
                     <span class="badge bg-danger ms-2">Low Stock</span>
                     {% endif %}
@@ -53,14 +64,53 @@
                 <td data-label="Cost" class="text-end">{{ item.cost_price }}</td>
                 <td data-label="Sell Price" class="text-end">{{ item.selling_price }}</td>
                 <td data-label="Actions">
-                    <a href="{{ url_for('inventory.edit', id=item.id) }}" class="btn btn-sm btn-warning">
-                        <i class="fas fa-edit"></i> Edit
-                    </a>
+                    <div class="d-flex gap-1 flex-wrap">
+                        <a href="{{ url_for('inventory.edit', id=item.id) }}" class="btn btn-sm btn-warning" title="Edit Item">
+                            <i class="fas fa-edit"></i>
+                        </a>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteInventoryModal{{ item.id }}" title="Delete / Request Delete">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </div>
+
+                    <!-- Delete Modal -->
+                    <div class="modal fade text-start" id="deleteInventoryModal{{ item.id }}" tabindex="-1" aria-hidden="true">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <form action="{{ url_for('inventory.delete', id=item.id) }}" method="POST">
+                                    <div class="modal-header bg-danger text-white">
+                                        <h5 class="modal-title">
+                                            <i class="fas fa-exclamation-triangle me-2"></i>
+                                            {% if current_user.is_admin %}Delete Inventory Item{% else %}Request Item Deletion{% endif %}
+                                        </h5>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        {% if current_user.is_admin %}
+                                        <p class="text-danger fw-bold">Are you sure you want to permanently delete item <strong>{{ item.brand }} {{ item.model_name }}</strong>?</p>
+                                        {% else %}
+                                        <p>Submit a deletion request for item <strong>{{ item.brand }} {{ item.model_name }}</strong>. An Admin will review your request.</p>
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">Reason for Deletion <span class="text-danger">*</span></label>
+                                            <textarea class="form-control" name="reason" rows="3" required placeholder="Please explain why this inventory item should be deleted..."></textarea>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button type="submit" class="btn btn-danger">
+                                            {% if current_user.is_admin %}Delete Permanently{% else %}Submit Request{% endif %}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
                 </td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="8" class="text-center" data-label="Status">No inventory items found.</td>
+                <td colspan="10" class="text-center" data-label="Status">No inventory items found.</td>
             </tr>
             {% endfor %}
         </tbody>

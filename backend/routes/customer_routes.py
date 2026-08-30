@@ -71,3 +71,55 @@ def edit(id):
             flash(f'Error updating customer: {str(e)}', 'danger')
             
     return render_template('customers/edit.html', customer=customer)
+
+@customer_bp.route('/delete/<int:id>', methods=['POST'])
+@login_required
+def delete(id):
+    customer = Customer.query.get_or_404(id)
+    
+    if current_user.is_admin:
+        try:
+            from models.order import Order
+            from models.prescription import Prescription
+            Order.query.filter_by(customer_id=customer.id).delete()
+            Prescription.query.filter_by(customer_id=customer.id).delete()
+            db.session.delete(customer)
+            db.session.commit()
+            flash(f'Customer "{customer.name}" and associated records deleted permanently.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error deleting customer: {str(e)}', 'danger')
+    else:
+        reason = request.form.get('reason', '').strip()
+        if not reason:
+            flash('Please provide a reason for deletion.', 'warning')
+            return redirect(url_for('customer.index'))
+            
+        from models.deletion_request import DeletionRequest
+        
+        # Check if there is already a pending request for this customer
+        existing_req = DeletionRequest.query.filter_by(
+            entity_type='customer', entity_id=customer.id, status='Pending'
+        ).first()
+        
+        if existing_req:
+            flash(f'A deletion request for customer "{customer.name}" is already pending admin review.', 'info')
+            return redirect(url_for('customer.index'))
+
+        del_req = DeletionRequest(
+            entity_type='customer',
+            entity_id=customer.id,
+            entity_identifier=f"{customer.name} (Phone: {customer.phone})",
+            reason=reason,
+            requested_by_id=current_user.id
+        )
+        try:
+            db.session.add(del_req)
+            db.session.commit()
+            flash(f'Deletion request for customer "{customer.name}" submitted to admin.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error submitting deletion request: {str(e)}', 'danger')
+            
+    return redirect(url_for('customer.index'))
+

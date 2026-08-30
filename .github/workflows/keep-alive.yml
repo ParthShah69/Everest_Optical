@@ -1,0 +1,29 @@
+name: Keep Render Dyno Warm
+
+on:
+  schedule:
+    # Ping every 10 minutes (Render free tier sleeps after 15 min idle)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /ping endpoint
+        run: |
+          URL="${{ secrets.RENDER_URL }}"
+          if [ -z "$URL" ]; then
+            URL="https://everest-optical.onrender.com"
+          fi
+          echo "Pinging $URL/ping"
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL/ping" || echo "000")
+            echo "Attempt $i: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Ping failed after 3 attempts"
+          exit 1

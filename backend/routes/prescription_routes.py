@@ -104,20 +104,51 @@ def edit(id):
 @prescription_bp.route('/delete/<int:id>', methods=['POST'])
 @login_required
 def delete(id):
-    if not current_user.is_admin:
-        flash('Only admins can delete prescriptions.', 'danger')
-        return redirect(url_for('customer.index'))
-    
     prescription = Prescription.query.get_or_404(id)
     customer_id = prescription.customer_id
-    try:
-        db.session.delete(prescription)
-        db.session.commit()
-        flash('Prescription deleted permanently.', 'success')
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error deleting: {str(e)}', 'danger')
+    customer_name = prescription.customer.name if prescription.customer else "Unknown"
+
+    if current_user.is_admin:
+        try:
+            db.session.delete(prescription)
+            db.session.commit()
+            flash('Prescription deleted permanently.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error deleting: {str(e)}', 'danger')
+    else:
+        reason = request.form.get('reason', '').strip()
+        if not reason:
+            flash('Please provide a reason for deletion.', 'warning')
+            return redirect(url_for('prescription.history', customer_id=customer_id))
+            
+        from models.deletion_request import DeletionRequest
+        
+        existing_req = DeletionRequest.query.filter_by(
+            entity_type='prescription', entity_id=prescription.id, status='Pending'
+        ).first()
+        
+        if existing_req:
+            flash('A deletion request for this prescription is already pending admin review.', 'info')
+            return redirect(url_for('prescription.history', customer_id=customer_id))
+
+        del_req = DeletionRequest(
+            entity_type='prescription',
+            entity_id=prescription.id,
+            entity_identifier=f"Prescription #{prescription.id} (Customer: {customer_name})",
+            reason=reason,
+            requested_by_id=current_user.id
+        )
+        try:
+            db.session.add(del_req)
+            db.session.commit()
+            flash('Deletion request for prescription submitted to admin.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error submitting deletion request: {str(e)}', 'danger')
+
     return redirect(url_for('prescription.history', customer_id=customer_id))
+
 
 @prescription_bp.route('/ocr_scan', methods=['POST'])
 @login_required

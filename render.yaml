@@ -5,7 +5,8 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --timeout 120 app:app
+    startCommand: gunicorn --timeout 120 --workers 2 --threads 4 --worker-class gthread --preload app:app
+    healthCheckPath: /ping
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9

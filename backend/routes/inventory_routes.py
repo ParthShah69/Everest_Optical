@@ -27,11 +27,35 @@ def index():
     
     return render_template('inventory/list.html', items=items, search=search)
 
+import os
+import uuid
+from werkzeug.utils import secure_filename
+
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def save_inventory_image(file):
+    if file and file.filename != '' and allowed_file(file.filename):
+        ext = file.filename.rsplit('.', 1)[1].lower()
+        filename = secure_filename(f"inv_{uuid.uuid4().hex[:8]}.{ext}")
+        save_dir = os.path.join('static', 'uploads', 'inventory')
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, filename)
+        file.save(filepath)
+        return filepath.replace('\\', '/')
+    return None
+
 @inventory_bp.route('/add', methods=['GET', 'POST'])
 @login_required
 def add():
     if request.method == 'POST':
         try:
+            image_path = None
+            if 'image' in request.files:
+                image_path = save_inventory_image(request.files['image'])
+
             new_item = Inventory(
                 model_name=request.form.get('model_name'),
                 brand=request.form.get('brand'),
@@ -42,7 +66,8 @@ def add():
                 cost_price=float(request.form.get('cost_price', 0)),
                 selling_price=float(request.form.get('selling_price', 0)),
                 low_stock_threshold=int(request.form.get('low_stock_threshold', 5)),
-                color_stock=request.form.get('color_stock') or None
+                color_stock=request.form.get('color_stock') or None,
+                image_path=image_path
             )
             db.session.add(new_item)
             db.session.commit()
@@ -72,6 +97,11 @@ def edit(id):
             item.low_stock_threshold = int(request.form.get('low_stock_threshold', 5))
             item.color_stock = request.form.get('color_stock') or None
             
+            if 'image' in request.files:
+                new_image = save_inventory_image(request.files['image'])
+                if new_image:
+                    item.image_path = new_image
+
             db.session.commit()
             flash('Inventory updated!', 'success')
             return redirect(url_for('inventory.index'))
@@ -80,3 +110,50 @@ def edit(id):
             flash(f'Error updating item: {str(e)}', 'danger')
 
     return render_template('inventory/edit.html', item=item)
+
+@inventory_bp.route('/delete/<int:id>', methods=['POST'])
+@login_required
+def delete(id):
+    item = Inventory.query.get_or_404(id)
+    item_identifier = f"{item.brand or ''} {item.model_name}".strip()
+
+    if current_user.is_admin:
+        try:
+            db.session.delete(item)
+            db.session.commit()
+            flash(f'Inventory item "{item_identifier}" deleted permanently.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error deleting inventory item: {str(e)}', 'danger')
+    else:
+        reason = request.form.get('reason', '').strip()
+        if not reason:
+            flash('Please provide a reason for deletion.', 'warning')
+            return redirect(url_for('inventory.index'))
+
+        from models.deletion_request import DeletionRequest
+        existing_req = DeletionRequest.query.filter_by(
+            entity_type='inventory', entity_id=item.id, status='Pending'
+        ).first()
+
+        if existing_req:
+            flash(f'A deletion request for item "{item_identifier}" is already pending admin review.', 'info')
+            return redirect(url_for('inventory.index'))
+
+        del_req = DeletionRequest(
+            entity_type='inventory',
+            entity_id=item.id,
+            entity_identifier=f"Item: {item_identifier} (Qty: {item.quantity})",
+            reason=reason,
+            requested_by_id=current_user.id
+        )
+        try:
+            db.session.add(del_req)
+            db.session.commit()
+            flash(f'Deletion request for inventory item "{item_identifier}" submitted to admin.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error submitting deletion request: {str(e)}', 'danger')
+
+    return redirect(url_for('inventory.index'))
+
