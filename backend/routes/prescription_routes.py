@@ -10,9 +10,12 @@ from werkzeug.utils import secure_filename
 
 prescription_bp = Blueprint('prescription', __name__, url_prefix='/prescriptions')
 
-# Configure Upload Folder (Basic setup)
-UPLOAD_FOLDER = 'uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Configure Upload Folder
+UPLOAD_FOLDER = os.path.join('static', 'uploads')
+try:
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+except OSError:
+    pass
 
 @prescription_bp.route('/add/<int:customer_id>', methods=['GET', 'POST'])
 @login_required
@@ -36,10 +39,17 @@ def add(customer_id):
                 if file and file.filename != '' and allowed_file(file.filename):
                     filename = secure_filename(f"presc_{customer_id}_{uuid.uuid4().hex[:8]}.{file.filename.rsplit('.', 1)[1].lower()}")
                     save_dir = os.path.join('static', 'uploads')
-                    os.makedirs(save_dir, exist_ok=True)
-                    filepath = os.path.join(save_dir, filename)
-                    file.save(filepath)
-                    image_path = filepath.replace('\\', '/')
+                    try:
+                        os.makedirs(save_dir, exist_ok=True)
+                        filepath = os.path.join(save_dir, filename)
+                        file.save(filepath)
+                        image_path = filepath.replace('\\', '/')
+                    except OSError:
+                        tmp_dir = os.path.join('/tmp', 'uploads')
+                        os.makedirs(tmp_dir, exist_ok=True)
+                        filepath = os.path.join(tmp_dir, filename)
+                        file.save(filepath)
+                        image_path = filepath.replace('\\', '/')
 
             new_prescription = Prescription(
                 customer_id=customer_id,

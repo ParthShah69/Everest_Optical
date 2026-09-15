@@ -41,10 +41,17 @@ def save_inventory_image(file):
         ext = file.filename.rsplit('.', 1)[1].lower()
         filename = secure_filename(f"inv_{uuid.uuid4().hex[:8]}.{ext}")
         save_dir = os.path.join('static', 'uploads', 'inventory')
-        os.makedirs(save_dir, exist_ok=True)
-        filepath = os.path.join(save_dir, filename)
-        file.save(filepath)
-        return filepath.replace('\\', '/')
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            filepath = os.path.join(save_dir, filename)
+            file.save(filepath)
+            return filepath.replace('\\', '/')
+        except OSError:
+            tmp_dir = os.path.join('/tmp', 'uploads', 'inventory')
+            os.makedirs(tmp_dir, exist_ok=True)
+            filepath = os.path.join(tmp_dir, filename)
+            file.save(filepath)
+            return filepath.replace('\\', '/')
     return None
 
 @inventory_bp.route('/add', methods=['GET', 'POST'])
