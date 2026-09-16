@@ -1,0 +1,68 @@
+<!-- AI Assistant Floating Widget -->
+<div id="ai-chat-root">
+    <!-- Floating Launcher Button -->
+    <button id="ai-chat-launcher" type="button" aria-label="Open AI Assistant" title="Optical AI Assistant">
+        <i class="fas fa-robot"></i>
+        <span class="ai-badge"></span>
+    </button>
+
+    <!-- Collapsible Chat Window -->
+    <div id="ai-chat-window" class="hidden" role="dialog" aria-modal="true" aria-labelledby="ai-chat-title">
+        <!-- Chat Header -->
+        <div class="ai-header">
+            <div class="ai-header-left">
+                <div class="ai-header-avatar">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <div>
+                    <div id="ai-chat-title" class="ai-header-title">Optical AI Assistant</div>
+                    <div class="ai-header-status">
+                        <span id="ai-status-dot" class="ai-status-dot"></span>
+                        <span id="ai-status-text">Checking...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="ai-header-actions">
+                <button type="button" id="ai-min-btn" class="ai-header-btn" title="Minimize" aria-label="Minimize">
+                    <i class="fas fa-minus"></i>
+                </button>
+                <button type="button" id="ai-close-btn" class="ai-header-btn" title="Close" aria-label="Close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Quick Suggestions Chips (Multilingual) -->
+        <div id="ai-suggestions" class="ai-suggestions">
+            <button type="button" class="ai-chip" data-prompt="Naya bill banao"><i class="fas fa-file-invoice me-1"></i> बिल बनाओ</button>
+            <button type="button" class="ai-chip" data-prompt="Navo customer add karvo che"><i class="fas fa-user-plus me-1"></i> નવો ગ્રાહક</button>
+            <button type="button" class="ai-chip" data-prompt="Show recent orders"><i class="fas fa-list me-1"></i> Recent Orders</button>
+            <button type="button" class="ai-chip" data-prompt="Frames stock check karo"><i class="fas fa-boxes me-1"></i> સ્ટોક તપાસો</button>
+            <button type="button" class="ai-chip" data-prompt="Prescriptions list batav"><i class="fas fa-glasses me-1"></i> Prescriptions</button>
+        </div>
+
+        <!-- Chat Body / Messages -->
+        <div id="ai-messages" class="ai-body">
+            <div class="ai-msg assistant">
+                नमस्ते! 👋 હું તમારો Optical ERP AI Assistant છું.
+                <br><br>
+                તમે મને <strong>English</strong>, <strong>Hindi</strong>, અથવા <strong>Gujarati</strong> માં કહી શકો છો.
+                <br>
+                <em>ઉદાહરણ: "Bill banao", "Customer Rahul add karo", "Stock check karo"</em>
+            </div>
+        </div>
+
+        <!-- Chat Footer / Controls -->
+        <div class="ai-footer">
+            <button type="button" id="ai-mic-btn" class="ai-btn-action ai-btn-mic" title="Voice Input (Speech to Text)">
+                <i class="fas fa-microphone"></i>
+            </button>
+            <div class="ai-input-wrap">
+                <input type="text" id="ai-input-text" class="ai-input" placeholder="Type or speak (EN / HI / GU)..." autocomplete="off">
+            </div>
+            <button type="button" id="ai-send-btn" class="ai-btn-action ai-btn-send" title="Send">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+</div>
