@@ -42,7 +42,7 @@ class Config:
     # ── AI Assistant Configuration ─────────────────────────────────────────────
     # Ollama local LLM settings
     AI_OLLAMA_HOST = os.environ.get('AI_OLLAMA_HOST', 'http://localhost:11434')
-    AI_LLM_MODEL = os.environ.get('AI_LLM_MODEL', 'qwen3:8b')
+    AI_LLM_MODEL = os.environ.get('AI_LLM_MODEL', 'qwen3:4b')
 
     # Speech-to-Text: 'whisper_local' | 'sarvam_api' | 'browser'
     AI_STT_BACKEND = os.environ.get('AI_STT_BACKEND', 'whisper_local')
