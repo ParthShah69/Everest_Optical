@@ -21,6 +21,8 @@ def create_app(config_class=Config):
     login_manager.init_app(app)
     bcrypt.init_app(app)
     migrate.init_app(app, db)
+    from extensions import socketio
+    socketio.init_app(app, cors_allowed_origins="*", async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'))
 
     login_manager.login_view = 'auth.login'
     login_manager.login_message_category = 'info'
@@ -51,6 +53,9 @@ def create_app(config_class=Config):
     app.register_blueprint(audit_bp)
     from routes.deletion_request_routes import deletion_request_bp
     app.register_blueprint(deletion_request_bp)
+    from routes.ai_routes import ai_bp
+    app.register_blueprint(ai_bp)
+    import models.chat_history
 
     @app.context_processor
     def inject_pending_deletions():
