@@ -39,3 +39,25 @@ class Config:
     GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
     GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
 
+    # ── AI Assistant Configuration ─────────────────────────────────────────────
+    # Ollama local LLM settings
+    AI_OLLAMA_HOST = os.environ.get('AI_OLLAMA_HOST', 'http://localhost:11434')
+    AI_LLM_MODEL = os.environ.get('AI_LLM_MODEL', 'qwen3:8b')
+
+    # Speech-to-Text: 'whisper_local' | 'sarvam_api' | 'browser'
+    AI_STT_BACKEND = os.environ.get('AI_STT_BACKEND', 'whisper_local')
+    # Whisper model size: tiny | base | small | medium | large-v3
+    AI_STT_MODEL_SIZE = os.environ.get('AI_STT_MODEL_SIZE', 'small')
+
+    # Optional Sarvam AI API key for Indian-language STT fallback
+    AI_SARVAM_API_KEY = os.environ.get('AI_SARVAM_API_KEY', '')
+
+    # Max ReAct tool-call iterations before giving up
+    AI_MAX_TOOL_ITERATIONS = int(os.environ.get('AI_MAX_TOOL_ITERATIONS', 6))
+
+    # Default assistant response language: 'en' | 'hi' | 'gu' | 'auto'
+    AI_DEFAULT_LANGUAGE = os.environ.get('AI_DEFAULT_LANGUAGE', 'auto')
+
+    # SocketIO async mode
+    SOCKETIO_ASYNC_MODE = os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet')
+
