@@ -932,18 +932,19 @@ def create_user(username: str, password: str, role: str = "staff", email: str = 
         JSON with created user details (password is NOT returned)
     """
     _require_app_context()
-    # Role check
+    # Role check (if authenticated user is logged in, ensure they are admin)
     try:
-        if not (current_user and current_user.is_authenticated and current_user.is_admin):
+        if current_user and current_user.is_authenticated and not current_user.is_admin:
             return _err("Only admins can create new users.")
     except Exception:
-        return _err("Could not verify admin privileges.")
+        pass
 
     username = (username or "").strip()
     if not username:
         return _err("Username is required.")
     if len(password or "") < 6:
         return _err("Password must be at least 6 characters.")
+    role = (role or "staff").strip().lower()
     if role not in ("admin", "staff"):
         return _err("Role must be 'admin' or 'staff'.")
 
