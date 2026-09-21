@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receipt {{ payment.receipt_no }}</title><link rel="stylesheet" href="{{ url_for('static', filename='css/print.css') }}"></head>
+<body><div class="top-actions"><button onclick="window.print()">Print receipt</button></div><main class="print-page receipt">
+<header class="document-header"><div><div class="brand">OPTICAL ERP</div><div class="muted">Payment receipt</div></div><div class="right"><h1 class="document-title">RECEIPT</h1><div>{{ payment.receipt_no }}</div></div></header>
+<section class="info-grid"><div class="info-block"><h3>Received from</h3><p><b>{{ order.customer.name }}</b></p><p>{{ order.customer.phone }}</p></div><div class="info-block right"><h3>Payment details</h3><p><b>Date:</b> {{ payment.created_at.strftime('%d %b %Y %I:%M %p') if payment.created_at else '' }}</p><p><b>Order:</b> {{ order.order_no }}</p><p><b>Method:</b> {{ payment.payment_method }}</p></div></section>
+<table><tbody><tr><td><b>Amount received</b></td><td class="number"><b>₹{{ '%.2f'|format(payment.amount) }}</b></td></tr><tr><td>Payment type</td><td class="number">{{ payment.payment_type|title }}</td></tr>{% if payment.remark %}<tr><td>Remark</td><td class="number">{{ payment.remark }}</td></tr>{% endif %}</tbody></table>
+<table class="totals"><tbody><tr><td>Invoice total</td><td class="number">₹{{ '%.2f'|format(order.total_amount) }}</td></tr><tr><td>Total paid</td><td class="number">₹{{ '%.2f'|format(order.total_paid) }}</td></tr><tr class="grand"><td>Balance due</td><td class="number">₹{{ '%.2f'|format(order.remaining_due) }}</td></tr></tbody></table>
+<p class="muted">This is a system-generated receipt.</p><div class="signature-grid"><div class="signature">Customer signature</div><div class="signature right">Authorised signatory</div></div>
+</main></body></html>

@@ -83,6 +83,12 @@
                             {% endif %}
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {{ 'active' if request.endpoint and 'tax_config' in request.endpoint else '' }}"
+                            href="{{ url_for('tax_config.index') }}">
+                            <i class="fas fa-percent me-2"></i> GST Configuration
+                        </a>
+                    </li>
                 </ul>
                 {% endif %}
 
@@ -106,7 +112,7 @@
     <main
         class="{{ 'col-md-9 ms-sm-auto col-lg-10 px-3 px-md-4 main-content flex-grow-1' if current_user.is_authenticated else 'container mt-5' }}">
 
-        <!-- Top Navbar (Mobile Toggle + Dark Mode) -->
+        <!-- Top Navbar (Mobile Toggle + Global Search + Dark Mode) -->
         {% if current_user.is_authenticated %}
         <nav class="navbar navbar-expand-lg navbar-light bg-light rounded shadow-sm mb-4 mt-2">
             <div class="container-fluid">
@@ -118,6 +124,19 @@
                 <span class="navbar-brand fw-bold d-md-none ms-2">
                     <i class="fas fa-glasses me-1"></i> Optical ERP
                 </span>
+                
+                <!-- Global Smart Search -->
+                <div class="d-none d-md-block flex-grow-1 mx-3" style="max-width: 400px; position: relative;">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-white"><i class="fas fa-search text-muted"></i></span>
+                        <input type="text" class="form-control" id="globalSearchInput" 
+                               placeholder="Search customer by name or phone..." autocomplete="off">
+                    </div>
+                    <div id="globalSearchResults" class="position-absolute w-100 bg-white border rounded shadow-lg mt-1" 
+                         style="display:none; z-index:1050; max-height:300px; overflow-y:auto;">
+                    </div>
+                </div>
+
                 <span class="navbar-text ms-2 d-none d-md-block">
                     Welcome, <strong>{{ current_user.username }}</strong>
                 </span>
@@ -176,6 +195,72 @@
                     const newTheme = switchToggle.checked ? 'dark' : 'light';
                     html.setAttribute('data-bs-theme', newTheme);
                     localStorage.setItem('theme', newTheme);
+                });
+            }
+
+            // ── Global Smart Search ──
+            const searchInput = document.getElementById('globalSearchInput');
+            const searchResults = document.getElementById('globalSearchResults');
+            let searchTimeout = null;
+
+            if (searchInput && searchResults) {
+                searchInput.addEventListener('input', function() {
+                    clearTimeout(searchTimeout);
+                    const q = this.value.trim();
+                    if (q.length < 2) {
+                        searchResults.style.display = 'none';
+                        return;
+                    }
+                    searchTimeout = setTimeout(() => {
+                        fetch(`/api/search?q=${encodeURIComponent(q)}`)
+                            .then(r => r.json())
+                            .then(data => {
+                                let html = '';
+                                if (data.customers.length === 0 && data.orders.length === 0) {
+                                    html = '<div class="p-3 text-muted text-center">No results found</div>';
+                                } else {
+                                    if (data.customers.length > 0) {
+                                        html += '<div class="px-3 py-1 bg-light text-muted small fw-bold">Customers</div>';
+                                        data.customers.forEach(c => {
+                                            html += `<div class="px-3 py-2 border-bottom d-flex justify-content-between align-items-center search-result-item" style="cursor:pointer;">
+                                                <div>
+                                                    <strong>${c.name}</strong> <small class="text-muted">${c.phone}</small>
+                                                    ${c.care_of ? '<br><small class="text-muted">c/o ' + c.care_of + '</small>' : ''}
+                                                </div>
+                                                <div class="d-flex gap-1">
+                                                    <a href="/orders/new/${c.id}" class="btn btn-sm btn-outline-success" title="New Order">
+                                                        <i class="fas fa-plus"></i> Order
+                                                    </a>
+                                                    <a href="/prescriptions/add/${c.id}" class="btn btn-sm btn-outline-info" title="Add Rx">
+                                                        <i class="fas fa-prescription"></i>
+                                                    </a>
+                                                </div>
+                                            </div>`;
+                                        });
+                                    }
+                                    if (data.orders.length > 0) {
+                                        html += '<div class="px-3 py-1 bg-light text-muted small fw-bold">Orders</div>';
+                                        data.orders.forEach(o => {
+                                            html += `<a href="/orders/${o.id}" class="d-block px-3 py-2 border-bottom text-decoration-none text-dark search-result-item">
+                                                <strong>${o.order_no}</strong> — ${o.customer_name}
+                                                <span class="badge bg-secondary ms-2">${o.status}</span>
+                                                <span class="float-end">₹${o.total.toFixed(2)}</span>
+                                            </a>`;
+                                        });
+                                    }
+                                }
+                                searchResults.innerHTML = html;
+                                searchResults.style.display = 'block';
+                            })
+                            .catch(() => { searchResults.style.display = 'none'; });
+                    }, 300);
+                });
+
+                // Hide on click outside
+                document.addEventListener('click', function(e) {
+                    if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                        searchResults.style.display = 'none';
+                    }
                 });
             }
         });

@@ -18,7 +18,11 @@
                 <th>Date</th>
                 <th>RE (SPH / CYL / AXIS)</th>
                 <th>LE (SPH / CYL / AXIS)</th>
+                <th>Near Vision (RE / LE)</th>
                 <th>ADD</th>
+                <th>PD (R / L / Total)</th>
+                <th>Lens Details</th>
+                <th>Doctor / Expiry</th>
                 <th>Notes</th>
                 <th>By</th>
                 <th>Actions</th>
@@ -30,7 +34,26 @@
                 <td data-label="Date">{{ rx.created_at.strftime('%d-%m-%Y') }}</td>
                 <td data-label="RE">{{ rx.re_sph or '-' }} / {{ rx.re_cyl or '-' }} / {{ rx.re_axis or '-' }}</td>
                 <td data-label="LE">{{ rx.le_sph or '-' }} / {{ rx.le_cyl or '-' }} / {{ rx.le_axis or '-' }}</td>
+                <td data-label="Near Vision">
+                    <div><span class="fw-semibold">R:</span> {{ rx.re_nv_sph or '-' }} / {{ rx.re_nv_cyl or '-' }} / {{ rx.re_nv_axis or '-' }}</div>
+                    <div><span class="fw-semibold">L:</span> {{ rx.le_nv_sph or '-' }} / {{ rx.le_nv_cyl or '-' }} / {{ rx.le_nv_axis or '-' }}</div>
+                </td>
                 <td data-label="ADD">{{ rx.addition or '-' }}</td>
+                <td data-label="PD">{{ rx.pd_right or '-' }} / {{ rx.pd_left or '-' }} / {{ rx.pd_total or '-' }}</td>
+                <td data-label="Lens Details">
+                    {% if rx.lens_classification %}
+                    <span class="badge bg-{{ 'success' if rx.lens_classification == 'Ready Stock' else 'primary' }}">{{ rx.lens_classification }}</span>
+                    {% else %}
+                    -
+                    {% endif %}
+                    {% if rx.lens_type_tags %}
+                    <div class="small text-muted mt-1">{{ rx.lens_type_tags }}</div>
+                    {% endif %}
+                </td>
+                <td data-label="Doctor / Expiry">
+                    <div>{{ rx.referred_by or '-' }}</div>
+                    {% if rx.lens_expiry_date %}<div class="small text-muted">Expires {{ rx.lens_expiry_date.strftime('%d-%m-%Y') }}</div>{% endif %}
+                </td>
                 <td data-label="Notes">{{ rx.notes or '-' }}</td>
                 <td data-label="By">{{ rx.creator.username if rx.creator else 'System' }}</td>
                 <td data-label="Actions">
@@ -50,7 +73,7 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="7" class="text-center" data-label="Status">No prescriptions found.</td>
+                <td colspan="11" class="text-center" data-label="Status">No prescriptions found.</td>
             </tr>
             {% endfor %}
         </tbody>

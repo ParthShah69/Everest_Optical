@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1"><i class="fas fa-percent me-2"></i>GST Configuration</h2>
+        <p class="text-muted mb-0">Manage the GST rates available while creating an order.</p>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card shadow-sm">
+            <div class="card-header fw-semibold">{{ 'Edit GST Rate' if editing_config else 'Add GST Rate' }}</div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('tax_config.save') }}">
+                    {% if editing_config %}<input type="hidden" name="id" value="{{ editing_config.id }}">{% endif %}
+                    <div class="mb-3">
+                        <label class="form-label" for="name">Name</label>
+                        <input class="form-control" id="name" name="name" required maxlength="100" placeholder="e.g. Optical Goods GST" value="{{ editing_config.name if editing_config else '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="rate">GST Percentage</label>
+                        <div class="input-group">
+                            <input class="form-control" id="rate" name="rate" type="number" min="0" max="100" step="0.01" required placeholder="12" value="{{ editing_config.rate if editing_config else '' }}">
+                            <span class="input-group-text">%</span>
+                        </div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {{ 'checked' if not editing_config or editing_config.is_active }}>
+                        <label class="form-check-label" for="is_active">Available for new orders</label>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="is_default" name="is_default" {{ 'checked' if editing_config and editing_config.is_default }}>
+                        <label class="form-check-label" for="is_default">Use as default rate</label>
+                    </div>
+                    <button class="btn btn-primary w-100" type="submit"><i class="fas fa-save me-1"></i> Save GST Rate</button>
+                    {% if editing_config %}<a class="btn btn-link w-100 mt-1" href="{{ url_for('tax_config.index') }}">Cancel</a>{% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light"><tr><th>Name</th><th>Rate</th><th>Status</th><th>Default</th><th class="text-end">Action</th></tr></thead>
+                        <tbody>
+                        {% for config in configs %}
+                            <tr>
+                                <td>{{ config.name }}</td>
+                                <td>{{ config.rate }}%</td>
+                                <td><span class="badge bg-{{ 'success' if config.is_active else 'secondary' }}">{{ 'Active' if config.is_active else 'Disabled' }}</span></td>
+                                <td>{% if config.is_default %}<i class="fas fa-check text-primary" title="Default"></i>{% else %}—{% endif %}</td>
+                                <td class="text-end">
+                                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('tax_config.edit', id=config.id) }}">Edit</a>
+                                    <form method="post" action="{{ url_for('tax_config.toggle', id=config.id) }}" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Disable' if config.is_active else 'Enable' }}</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% else %}
+                            <tr><td colspan="5" class="text-center text-muted py-4">No GST rates configured yet.</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

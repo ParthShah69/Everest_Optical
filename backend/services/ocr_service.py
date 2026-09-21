@@ -49,47 +49,126 @@ def process_prescription_image(image_path):
 
 def parse_ocr_text(text_list):
     """
-    Heuristic parser to find Right Eye (OD/RE) and Left Eye (OS/LE) values.
-    Looks for patterns like SPH, CYL, AXIS or just numbers following OD/OS keys.
+    Extract common prescription values from EasyOCR text fragments.
+
+    OCR cannot reliably recover the two-dimensional layout of every handwritten
+    prescription, so this parser only fills a field when it finds an eye/field
+    label or a conventional eye-value sequence. The caller must still ask the
+    user to verify the auto-filled values.
     """
-    full_text = " ".join(text_list).upper()
-    
+    full_text = " ".join(str(text) for text in text_list).upper()
+    full_text = re.sub(r'\s+', ' ', full_text).strip()
+
     data = {
         "re_sph": None, "re_cyl": None, "re_axis": None,
-        "le_sph": None, "le_cyl": None, "le_axis": None
+        "le_sph": None, "le_cyl": None, "le_axis": None,
+        "re_nv_sph": None, "re_nv_cyl": None, "re_nv_axis": None,
+        "le_nv_sph": None, "le_nv_cyl": None, "le_nv_axis": None,
+        "addition": None,
+        "pd_right": None, "pd_left": None, "pd_total": None,
     }
 
-    # Regex for finding diopter values (e.g., -1.25, +2.00, 0.50)
-    # Allows optional +/-, digits, optional decimal
-    number_pattern = r'[+-]?\d+(?:\.\d{2})?' 
-    
-    # 1. Try to find explicit blocks for RE/OD and LE/OS
-    # This is hard because OCR flattens layout. 
-    # We will look for sequences of numbers near keywords.
+    # Split at NV/reading headers when present so an OD/OS entry from the near
+    # section never overwrites the distant-vision values.
+    near_header = re.search(r'\b(?:NEAR\s+VISION|N\s*\.?V\.?|READING)\b', full_text)
+    dv_text = full_text[:near_header.start()] if near_header else full_text
+    nv_text = full_text[near_header.end():] if near_header else ''
 
-    # Heuristic: Find "SPH" and look for nearest numbers?
-    # Or find "OD" (Right) and "OS" (Left) lines.
-    
-    # Let's try iterating through lines to find "OD" or "R" and "OS" or "L"
-    
-    # Simple strategy: Find all numbers with decimals (likely SPH/CYL) and integers (AXIS)
-    # This is very prone to error without fixed forms. 
-    # We will assume a standard sequence: SPH -> CYL -> AXIS if multiple numbers appear.
-    
-    # Let's try to detect if we have specific labels
-    tokens = full_text.split()
-    
-    # Temporary storage for found numbers
-    numbers = [t for t in tokens if re.match(r'^[+-]?\d+(\.\d+)?$', t)]
-    
-    # If we found at least 6 numbers, maybe they are RE SPH, CYL, AXIS, LE SPH, CYL, AXIS
-    # This is a wild guess but better than nothing for a basic V1
-    if len(numbers) >= 6:
-        data["re_sph"] = numbers[0]
-        data["re_cyl"] = numbers[1]
-        data["re_axis"] = numbers[2]
-        data["le_sph"] = numbers[3]
-        data["le_cyl"] = numbers[4]
-        data["le_axis"] = numbers[5]
-    
+    _populate_eye_values(data, dv_text, 're', 'le')
+    if nv_text:
+        _populate_eye_values(data, nv_text, 're_nv', 'le_nv')
+
+    data['addition'] = _find_labeled_number(full_text, r'\b(?:ADD|ADDITION)\b', 0, 4)
+    _populate_pd_values(data, full_text)
     return data
+
+
+_NUMBER_PATTERN = r'[+-]?\d+(?:\.\d{1,2})?'
+_RIGHT_EYE_PATTERN = r'\b(?:RIGHT|OD|RE)\b'
+_LEFT_EYE_PATTERN = r'\b(?:LEFT|OS|LE)\b'
+
+
+def _format_number(value):
+    """Return a browser-friendly numeric string while preserving an OCR sign."""
+    return value.strip() if value is not None else None
+
+
+def _find_labeled_number(text, label_pattern, minimum=None, maximum=None):
+    match = re.search(
+        rf'{label_pattern}\s*(?:[:=]|IS)?\s*({_NUMBER_PATTERN})', text,
+    )
+    if not match:
+        return None
+    value = float(match.group(1))
+    if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+        return None
+    return _format_number(match.group(1))
+
+
+def _eye_block(text, eye_pattern, other_eye_pattern):
+    """Return text after an eye label, ending at the next opposite-eye label."""
+    match = re.search(eye_pattern, text)
+    if not match:
+        return ''
+    following = text[match.end():]
+    next_eye = re.search(other_eye_pattern, following)
+    return following[:next_eye.start()] if next_eye else following[:120]
+
+
+def _extract_eye_values(block):
+    if not block:
+        return (None, None, None)
+
+    sph = _find_labeled_number(block, r'\bSPH(?:ERE)?\b', -30, 30)
+    cyl = _find_labeled_number(block, r'\bCYL(?:INDER)?\b', -20, 20)
+    axis = _find_labeled_number(block, r'\bAX(?:IS)?\b', 0, 180)
+    values = re.findall(_NUMBER_PATTERN, block)
+
+    # Conventional unlabelled format: OD/OS <SPH> <CYL> <AXIS>.
+    if sph is None and values:
+        candidate = float(values[0])
+        if -30 <= candidate <= 30:
+            sph = _format_number(values[0])
+    if cyl is None and len(values) > 1:
+        candidate = float(values[1])
+        if -20 <= candidate <= 20:
+            cyl = _format_number(values[1])
+    if axis is None and len(values) > 2:
+        candidate = float(values[2])
+        if 0 <= candidate <= 180:
+            axis = _format_number(values[2])
+    return sph, cyl, axis
+
+
+def _populate_eye_values(data, text, right_prefix, left_prefix):
+    right = _extract_eye_values(_eye_block(text, _RIGHT_EYE_PATTERN, _LEFT_EYE_PATTERN))
+    left = _extract_eye_values(_eye_block(text, _LEFT_EYE_PATTERN, _RIGHT_EYE_PATTERN))
+    for prefix, values in ((right_prefix, right), (left_prefix, left)):
+        data[f'{prefix}_sph'], data[f'{prefix}_cyl'], data[f'{prefix}_axis'] = values
+
+
+def _populate_pd_values(data, text):
+    # PD may be printed as R/L labels, a total (binocular) value, or a pair
+    # such as "PD 32 / 32". Restricting accepted ranges avoids treating an axis
+    # or invoice number as a pupil distance.
+    data['pd_right'] = _find_labeled_number(
+        text, r'\b(?:PD\s*(?:RIGHT|OD|RE)|(?:RIGHT|OD|RE)\s*PD)\b', 20, 40,
+    )
+    data['pd_left'] = _find_labeled_number(
+        text, r'\b(?:PD\s*(?:LEFT|OS|LE)|(?:LEFT|OS|LE)\s*PD)\b', 20, 40,
+    )
+    data['pd_total'] = _find_labeled_number(
+        text, r'\b(?:PD\s*)?(?:TOTAL\s*PD|PD\s*TOTAL|BINOCULAR\s*PD|PD\s*OU)\b', 50, 80,
+    )
+
+    pair = re.search(rf'\bPD\b\s*[:=]?\s*({_NUMBER_PATTERN})\s*(?:/|\\|,|X)\s*({_NUMBER_PATTERN})', text)
+    if pair:
+        right, left = (float(pair.group(1)), float(pair.group(2)))
+        if 20 <= right <= 40 and 20 <= left <= 40:
+            data['pd_right'] = data['pd_right'] or _format_number(pair.group(1))
+            data['pd_left'] = data['pd_left'] or _format_number(pair.group(2))
+            data['pd_total'] = data['pd_total'] or _format_number(str(right + left))
+
+    if data['pd_total'] is None:
+        # A lone "PD 64" is conventionally a binocular PD.
+        data['pd_total'] = _find_labeled_number(text, r'\bPD\b', 50, 80)

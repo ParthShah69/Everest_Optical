@@ -55,7 +55,16 @@ def create_app(config_class=Config):
     app.register_blueprint(deletion_request_bp)
     from routes.ai_routes import ai_bp
     app.register_blueprint(ai_bp)
+    from routes.payment_routes import payment_bp
+    app.register_blueprint(payment_bp)
+    from routes.search_routes import search_bp
+    app.register_blueprint(search_bp)
+    from routes.tax_config_routes import tax_config_bp
+    app.register_blueprint(tax_config_bp)
     import models.chat_history
+    import models.payment
+    import models.sequence
+    import models.tax_config
 
     @app.context_processor
     def inject_pending_deletions():

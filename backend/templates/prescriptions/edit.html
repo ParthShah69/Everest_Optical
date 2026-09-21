@@ -1,66 +1,132 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h2>Edit Prescription</h2>
-    <a href="{{ url_for('prescription.history', customer_id=customer.id) }}" class="btn btn-sm btn-secondary">
-        <i class="fas fa-arrow-left"></i> Back to History
-    </a>
-</div>
-
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-md-10">
         <div class="card shadow">
             <div class="card-header bg-warning text-dark">
-                <h5 class="mb-0">Editing Prescription for {{ customer.name }}</h5>
+                <h4 class="mb-0">Edit Prescription for {{ customer.name }}</h4>
             </div>
             <div class="card-body">
                 <form method="POST">
-
-                    <h5 class="border-bottom pb-2">Right Eye (OD)</h5>
+                    <!-- Referring Doctor -->
                     <div class="row mb-3">
-                        <div class="col-4">
-                            <label class="form-label">SPH</label>
-                            <input type="number" step="0.25" class="form-control" name="re_sph"
-                                value="{{ prescription.re_sph or '' }}" placeholder="e.g. -1.25">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label">CYL</label>
-                            <input type="number" step="0.25" class="form-control" name="re_cyl"
-                                value="{{ prescription.re_cyl or '' }}" placeholder="e.g. -0.50">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label">AXIS</label>
-                            <input type="number" step="1" min="0" max="180" class="form-control" name="re_axis"
-                                value="{{ prescription.re_axis or '' }}" placeholder="0-180">
+                        <div class="col-md-6">
+                            <label class="form-label"><i class="fas fa-user-md me-1"></i> Referred By (Doctor)</label>
+                            <input type="text" class="form-control" name="referred_by" value="{{ prescription.referred_by or '' }}">
                         </div>
                     </div>
 
-                    <h5 class="border-bottom pb-2 mt-3">Left Eye (OS)</h5>
+                    <!-- DV -->
+                    <h5 class="border-bottom pb-2 mt-3"><i class="fas fa-eye me-1"></i> Distant Vision (DV)</h5>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-bordered text-center">
+                            <thead class="table-light">
+                                <tr><th>Eye</th><th>SPH</th><th>CYL</th><th>AXIS</th><th>V/A</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="fw-bold text-primary">Right (OD)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_sph" value="{{ prescription.re_sph or '' }}"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_cyl" value="{{ prescription.re_cyl or '' }}"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_axis" value="{{ prescription.re_axis or '' }}"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="re_visual_acuity" value="{{ prescription.re_visual_acuity or '' }}"></td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold text-success">Left (OS)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_sph" value="{{ prescription.le_sph or '' }}"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_cyl" value="{{ prescription.le_cyl or '' }}"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_axis" value="{{ prescription.le_axis or '' }}"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="le_visual_acuity" value="{{ prescription.le_visual_acuity or '' }}"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- NV -->
+                    <h5 class="border-bottom pb-2 mt-3"><i class="fas fa-book-reader me-1"></i> Near Vision (NV)</h5>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-bordered text-center">
+                            <thead class="table-light">
+                                <tr><th>Eye</th><th>SPH</th><th>CYL</th><th>AXIS</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="fw-bold text-primary">Right (OD)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_nv_sph" value="{{ prescription.re_nv_sph or '' }}"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_nv_cyl" value="{{ prescription.re_nv_cyl or '' }}"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_nv_axis" value="{{ prescription.re_nv_axis or '' }}"></td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold text-success">Left (OS)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_nv_sph" value="{{ prescription.le_nv_sph or '' }}"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_nv_cyl" value="{{ prescription.le_nv_cyl or '' }}"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_nv_axis" value="{{ prescription.le_nv_axis or '' }}"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Addition & PD -->
                     <div class="row mb-3">
-                        <div class="col-4">
-                            <label class="form-label">SPH</label>
-                            <input type="number" step="0.25" class="form-control" name="le_sph"
-                                value="{{ prescription.le_sph or '' }}" placeholder="e.g. -1.25">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Addition (ADD)</label>
+                            <input type="number" step="0.25" min="0" class="form-control" name="addition" value="{{ prescription.addition or '' }}">
                         </div>
-                        <div class="col-4">
-                            <label class="form-label">CYL</label>
-                            <input type="number" step="0.25" class="form-control" name="le_cyl"
-                                value="{{ prescription.le_cyl or '' }}" placeholder="e.g. -0.50">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold text-danger">PD (Right)</label>
+                            <input type="number" step="0.5" class="form-control" name="pd_right" value="{{ prescription.pd_right or '' }}">
                         </div>
-                        <div class="col-4">
-                            <label class="form-label">AXIS</label>
-                            <input type="number" step="1" min="0" max="180" class="form-control" name="le_axis"
-                                value="{{ prescription.le_axis or '' }}" placeholder="0-180">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold text-danger">PD (Left)</label>
+                            <input type="number" step="0.5" class="form-control" name="pd_left" value="{{ prescription.pd_left or '' }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold text-danger">PD (Total)</label>
+                            <input type="number" step="0.5" class="form-control" name="pd_total" value="{{ prescription.pd_total or '' }}">
                         </div>
                     </div>
 
-                    <h5 class="border-bottom pb-2 mt-3">Addition (Near Vision)</h5>
+                    <!-- Lens -->
+                    <h5 class="border-bottom pb-2 mt-4"><i class="fas fa-glasses me-1"></i> Lens Details</h5>
                     <div class="row mb-3">
-                        <div class="col-md-4 col-6">
-                            <label class="form-label">ADD</label>
-                            <input type="number" step="0.25" min="0" class="form-control" name="addition"
-                                value="{{ prescription.addition or '' }}" placeholder="e.g. +1.00">
+                        <div class="col-md-4">
+                            <label class="form-label">Lens Classification</label>
+                            <div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="lens_classification" value="Ready Stock" {{ 'checked' if prescription.lens_classification == 'Ready Stock' }}>
+                                    <label class="form-check-label">Ready Stock</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="lens_classification" value="Rx" {{ 'checked' if prescription.lens_classification == 'Rx' }}>
+                                    <label class="form-check-label">Rx (Custom Order)</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Lens Type Tags</label>
+                            {% set current_tags = (prescription.lens_type_tags or '').split(',') %}
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for tag in ['Single Vision', 'Bifocal', 'Progressive', 'AR Coat', 'Blue Cut', 'Photochromic', 'Tinted', 'UV Protection', 'Contact Lens'] %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="lens_type_tags[]" value="{{ tag }}" {{ 'checked' if tag in current_tags }}>
+                                    <label class="form-check-label">{{ tag }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scheduling -->
+                    <h5 class="border-bottom pb-2 mt-4"><i class="fas fa-calendar-alt me-1"></i> Scheduling</h5>
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Next Visit Date</label>
+                            <input type="date" class="form-control" name="next_visit_date" value="{{ prescription.next_visit_date.strftime('%Y-%m-%d') if prescription.next_visit_date else '' }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Lens Expiry Date</label>
+                            <input type="date" class="form-control" name="lens_expiry_date" value="{{ prescription.lens_expiry_date.strftime('%Y-%m-%d') if prescription.lens_expiry_date else '' }}">
                         </div>
                     </div>
 
@@ -70,9 +136,8 @@
                     </div>
 
                     <div class="d-flex justify-content-between mt-4">
-                        <a href="{{ url_for('prescription.history', customer_id=customer.id) }}"
-                            class="btn btn-secondary">Cancel</a>
-                        <button type="submit" class="btn btn-warning text-dark fw-bold">Update Prescription</button>
+                        <a href="{{ url_for('prescription.history', customer_id=customer.id) }}" class="btn btn-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-warning">Update Prescription</button>
                     </div>
                 </form>
             </div>

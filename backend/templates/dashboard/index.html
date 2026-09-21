@@ -13,26 +13,99 @@
     </div>
 </div>
 
-<!-- Stats Cards -->
+<!-- Today's Stats Cards -->
+<h6 class="text-muted mb-3"><i class="fas fa-calendar-day me-1"></i> Today's Overview</h6>
 <div class="row mb-4">
-    <div class="col-xl-3 col-md-6 mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
         <div class="card border-left-primary shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
-                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Revenue</div>
-                        <div class="h5 mb-0 font-weight-bold text-gray-800">Rs. {{ "{:,.2f}".format(total_revenue) }}
-                        </div>
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Today's Sales</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">₹{{ "{:,.2f}".format(today_sales) }}</div>
+                        <small class="text-muted">{{ today_orders }} orders</small>
                     </div>
                     <div class="col-auto">
-                        <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                        <i class="fas fa-shopping-bag fa-2x text-gray-300"></i>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="col-xl-3 col-md-6 mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Today's Collection</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">₹{{ "{:,.2f}".format(today_collection) }}</div>
+                        <small class="text-muted">Payments received</small>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-hand-holding-usd fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card border-left-danger shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Today's Dues</div>
+                        <div class="h5 mb-0 font-weight-bold text-danger">₹{{ "{:,.2f}".format(today_dues) }}</div>
+                        <small class="text-muted">Outstanding today</small>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-exclamation-circle fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card border-left-warning shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Total Outstanding</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">₹{{ "{:,.2f}".format(total_dues) }}</div>
+                        <small class="text-muted">All unpaid</small>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-balance-scale fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Overall Stats Cards -->
+<h6 class="text-muted mb-3"><i class="fas fa-chart-bar me-1"></i> Overall Summary</h6>
+<div class="row mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Revenue</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">₹{{ "{:,.2f}".format(total_revenue) }}
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-rupee-sign fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-3">
         <div class="card border-left-success shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
@@ -48,7 +121,7 @@
         </div>
     </div>
 
-    <div class="col-xl-3 col-md-6 mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
         <div class="card border-left-info shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
@@ -64,7 +137,7 @@
         </div>
     </div>
 
-    <div class="col-xl-3 col-md-6 mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
         <div class="card border-left-warning shadow h-100 py-2">
             <div class="card-body">
                 <div class="row no-gutters align-items-center">
@@ -77,6 +150,36 @@
                         <i class="fas fa-exclamation-triangle fa-2x text-gray-300"></i>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Monthly Comparison -->
+<div class="row mb-4">
+    <div class="col-md-6 mb-3">
+        <div class="card shadow h-100">
+            <div class="card-body">
+                <h6 class="text-muted mb-2"><i class="fas fa-calendar-alt me-1"></i> Monthly Comparison</h6>
+                <div class="row text-center">
+                    <div class="col-6">
+                        <small class="text-muted">This Month</small>
+                        <h4 class="text-primary mb-0">₹{{ "{:,.0f}".format(this_month_revenue) }}</h4>
+                    </div>
+                    <div class="col-6">
+                        <small class="text-muted">Last Month</small>
+                        <h4 class="text-secondary mb-0">₹{{ "{:,.0f}".format(last_month_revenue) }}</h4>
+                    </div>
+                </div>
+                {% if last_month_revenue > 0 %}
+                {% set pct_change = ((this_month_revenue - last_month_revenue) / last_month_revenue * 100) %}
+                <div class="text-center mt-2">
+                    <span class="badge bg-{{ 'success' if pct_change >= 0 else 'danger' }}">
+                        <i class="fas fa-{{ 'arrow-up' if pct_change >= 0 else 'arrow-down' }}"></i>
+                        {{ "{:.1f}".format(pct_change) }}%
+                    </span>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -109,11 +212,11 @@
                                 <td>{{ order.issue_date }}</td>
                                 <td>
                                     <span
-                                        class="badge bg-{{ 'warning' if order.status == 'Pending' else 'success' if order.status == 'Delivered' else 'secondary' }}">
+                                        class="badge bg-{{ order.status_color }}">
                                         {{ order.status }}
                                     </span>
                                 </td>
-                                <td>Rs. {{ "{:,.2f}".format(order.total_amount) }}</td>
+                                <td>₹{{ "{:,.2f}".format(order.total_amount) }}</td>
                             </tr>
                             {% else %}
                             <tr>

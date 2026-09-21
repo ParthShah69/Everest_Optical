@@ -18,7 +18,9 @@ def index():
         query = query.filter(
             (Customer.name.ilike(search_filter)) | 
             (Customer.phone.ilike(search_filter)) |
-            (Customer.care_of.ilike(search_filter))
+            (Customer.care_of.ilike(search_filter)) |
+            (Customer.email.ilike(search_filter)) |
+            (Customer.city.ilike(search_filter))
         )
     
     # Order by most recently updated/created
@@ -33,13 +35,23 @@ def add():
         name = request.form.get('name')
         care_of = request.form.get('care_of')
         phone = request.form.get('phone')
+        email = request.form.get('email')
+        address = request.form.get('address')
+        city = request.form.get('city')
+        state = request.form.get('state')
+        pincode = request.form.get('pincode')
+        credit_limit = float(request.form.get('credit_limit', 0) or 0)
         
         # Basic validation
         if not name or not phone:
             flash('Name and Phone are required!', 'danger')
             return redirect(url_for('customer.add'))
 
-        new_customer = Customer(name=name, care_of=care_of, phone=phone)
+        new_customer = Customer(
+            name=name, care_of=care_of, phone=phone,
+            email=email, address=address, city=city,
+            state=state, pincode=pincode, credit_limit=credit_limit
+        )
         
         try:
             db.session.add(new_customer)
@@ -61,6 +73,12 @@ def edit(id):
         customer.name = request.form.get('name')
         customer.care_of = request.form.get('care_of')
         customer.phone = request.form.get('phone')
+        customer.email = request.form.get('email')
+        customer.address = request.form.get('address')
+        customer.city = request.form.get('city')
+        customer.state = request.form.get('state')
+        customer.pincode = request.form.get('pincode')
+        customer.credit_limit = float(request.form.get('credit_limit', 0) or 0)
         
         try:
             db.session.commit()
@@ -122,4 +140,3 @@ def delete(id):
             flash(f'Error submitting deletion request: {str(e)}', 'danger')
             
     return redirect(url_for('customer.index'))
-

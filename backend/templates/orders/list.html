@@ -2,7 +2,26 @@
 
 {% block content %}
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Recent Orders</h1>
+    <h1 class="h2">Orders</h1>
+</div>
+
+<!-- Search & Filter Bar -->
+<div class="row mb-3">
+    <div class="col-md-6">
+        <form method="GET" class="d-flex gap-2">
+            <input type="text" class="form-control" name="search" placeholder="Search by order no, customer name or phone..." value="{{ search or '' }}">
+            <select class="form-select" name="status" style="max-width:180px;">
+                <option value="">All Statuses</option>
+                {% for s in all_statuses %}
+                <option value="{{ s }}" {{ 'selected' if status_filter == s }}>{{ s }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i></button>
+            {% if search or status_filter %}
+            <a href="{{ url_for('order.index') }}" class="btn btn-outline-secondary" title="Clear"><i class="fas fa-times"></i></a>
+            {% endif %}
+        </form>
+    </div>
 </div>
 
 <div class="table-responsive">
@@ -24,13 +43,13 @@
                 <td data-label="Order No">{{ order.order_no }}</td>
                 <td data-label="Date">{{ order.issue_date.strftime('%Y-%m-%d') }}</td>
                 <td data-label="Customer">{{ order.customer.name }}</td>
-                <td data-label="Total">{{ order.total_amount }}</td>
+                <td data-label="Total">₹{{ order.total_amount }}</td>
                 <td data-label="Balance"
                     class="{{ 'text-danger fw-bold' if order.balance_amount > 0 else 'text-success' }}">
-                    {{ order.balance_amount }}
+                    ₹{{ order.balance_amount }}
                 </td>
                 <td data-label="Status">
-                    <span class="badge bg-{{ 'success' if order.status == 'Delivered' else 'info' }}">
+                    <span class="badge bg-{{ order.status_color }}">
                         {{ order.status }}
                     </span>
                 </td>
@@ -90,4 +109,31 @@
         </tbody>
     </table>
 </div>
+
+<!-- Pagination -->
+{% if orders.has_prev or orders.has_next %}
+<nav>
+    <ul class="pagination justify-content-center">
+        {% if orders.has_prev %}
+        <li class="page-item">
+            <a class="page-link" href="{{ url_for('order.index', page=orders.prev_num, status=status_filter, search=search) }}">Previous</a>
+        </li>
+        {% endif %}
+        {% for page_num in orders.iter_pages(left_edge=1, right_edge=1, left_current=1, right_current=2) %}
+        {% if page_num %}
+        <li class="page-item {{ 'active' if page_num == orders.page }}">
+            <a class="page-link" href="{{ url_for('order.index', page=page_num, status=status_filter, search=search) }}">{{ page_num }}</a>
+        </li>
+        {% else %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
+        {% endif %}
+        {% endfor %}
+        {% if orders.has_next %}
+        <li class="page-item">
+            <a class="page-link" href="{{ url_for('order.index', page=orders.next_num, status=status_filter, search=search) }}">Next</a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
 {% endblock %}

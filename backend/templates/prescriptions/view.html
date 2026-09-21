@@ -2,109 +2,170 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-9">
-        <div class="card shadow">
-            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Prescription Details</h5>
-                <small>Date: {{ prescription.created_at.strftime('%Y-%m-%d') }}</small>
-            </div>
-            <div class="card-body">
-                <div class="row mb-4">
-                    <div class="col-md-6">
-                        <h6><strong>Customer:</strong> {{ prescription.customer.name }}</h6>
-                    </div>
-                    <div class="col-md-6 text-end">
-                        <h6><strong>ID:</strong> #{{ prescription.id }}</h6>
-                    </div>
-                </div>
+    <div class="col-md-10">
+        <div class="d-flex justify-content-end mb-3 no-print">
+            <button onclick="window.print()" class="btn btn-secondary me-2"><i class="fas fa-print"></i> Print</button>
+            <a href="{{ url_for('prescription.edit', id=prescription.id) }}" class="btn btn-warning me-2"><i class="fas fa-edit"></i> Edit</a>
+            <a href="{{ url_for('prescription.history', customer_id=prescription.customer_id) }}" class="btn btn-outline-primary">Back to History</a>
+        </div>
 
-                <div class="table-responsive mb-4">
+        <div class="card shadow-lg border-0">
+            <div class="card-header bg-info text-white">
+                <h4 class="mb-0"><i class="fas fa-prescription me-2"></i> Prescription for {{ prescription.customer.name }}</h4>
+                <small>Created: {{ prescription.created_at.strftime('%d %b %Y %I:%M %p') if prescription.created_at else 'N/A' }}</small>
+            </div>
+            <div class="card-body p-4">
+
+                <!-- Referring Doctor -->
+                {% if prescription.referred_by %}
+                <div class="alert alert-light border mb-3">
+                    <i class="fas fa-user-md me-1"></i> <strong>Referred By:</strong> {{ prescription.referred_by }}
+                </div>
+                {% endif %}
+
+                <!-- DV Table -->
+                <h5 class="border-bottom pb-2"><i class="fas fa-eye me-1"></i> Distant Vision (DV)</h5>
+                <div class="table-responsive mb-3">
                     <table class="table table-bordered text-center">
                         <thead class="table-light">
-                            <tr>
-                                <th>Eye</th>
-                                <th>SPH</th>
-                                <th>CYL</th>
-                                <th>AXIS</th>
-                            </tr>
+                            <tr><th>Eye</th><th>SPH</th><th>CYL</th><th>AXIS</th><th>V/A</th></tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td class="fw-bold">Right (OD)</td>
-                                <td>{{ prescription.re_sph or '-' }}</td>
-                                <td>{{ prescription.re_cyl or '-' }}</td>
-                                <td>{{ prescription.re_axis or '-' }}</td>
+                                <td class="fw-bold text-primary">Right (OD)</td>
+                                <td>{{ prescription.re_sph or '—' }}</td>
+                                <td>{{ prescription.re_cyl or '—' }}</td>
+                                <td>{{ prescription.re_axis or '—' }}</td>
+                                <td>{{ prescription.re_visual_acuity or '—' }}</td>
                             </tr>
                             <tr>
-                                <td class="fw-bold">Left (OS)</td>
-                                <td>{{ prescription.le_sph or '-' }}</td>
-                                <td>{{ prescription.le_cyl or '-' }}</td>
-                                <td>{{ prescription.le_axis or '-' }}</td>
+                                <td class="fw-bold text-success">Left (OS)</td>
+                                <td>{{ prescription.le_sph or '—' }}</td>
+                                <td>{{ prescription.le_cyl or '—' }}</td>
+                                <td>{{ prescription.le_axis or '—' }}</td>
+                                <td>{{ prescription.le_visual_acuity or '—' }}</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
 
-                {% if prescription.notes %}
-                <div class="alert alert-secondary">
-                    <strong>Notes:</strong> {{ prescription.notes }}
+                <!-- NV Table -->
+                {% if prescription.re_nv_sph or prescription.le_nv_sph %}
+                <h5 class="border-bottom pb-2"><i class="fas fa-book-reader me-1"></i> Near Vision (NV)</h5>
+                <div class="table-responsive mb-3">
+                    <table class="table table-bordered text-center">
+                        <thead class="table-light">
+                            <tr><th>Eye</th><th>SPH</th><th>CYL</th><th>AXIS</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="fw-bold text-primary">Right (OD)</td>
+                                <td>{{ prescription.re_nv_sph or '—' }}</td>
+                                <td>{{ prescription.re_nv_cyl or '—' }}</td>
+                                <td>{{ prescription.re_nv_axis or '—' }}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold text-success">Left (OS)</td>
+                                <td>{{ prescription.le_nv_sph or '—' }}</td>
+                                <td>{{ prescription.le_nv_cyl or '—' }}</td>
+                                <td>{{ prescription.le_nv_axis or '—' }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
                 {% endif %}
 
-                {% if prescription.image_path %}
-                <div class="mt-4">
-                    <h6 class="border-bottom pb-2">Scanned Image</h6>
-                    <img src="{{ url_for('static', filename=prescription.image_path.replace('backend/static/', '')) }}"
-                        class="img-fluid rounded border p-1" style="max-height: 400px;" alt="Prescription Scan">
-                </div>
-                {% endif %}
-
-                <div class="d-flex justify-content-between align-items-center mt-4">
-                    <a href="{{ url_for('prescription.history', customer_id=prescription.customer_id) }}" class="btn btn-secondary">Back to Prescriptions</a>
-                    <div>
-                        <button onclick="window.print()" class="btn btn-outline-dark me-2"><i class="fas fa-print"></i> Print</button>
-                        <a href="{{ url_for('prescription.edit', id=prescription.id) }}" class="btn btn-warning me-2"><i class="fas fa-edit"></i> Edit</a>
-                        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deletePrescriptionModal">
-                            <i class="fas fa-trash-alt me-1"></i> {% if current_user.is_admin %}Delete{% else %}Request Deletion{% endif %}
-                        </button>
+                <!-- Addition & PD -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card bg-light text-center p-3">
+                            <small class="text-muted">Addition (ADD)</small>
+                            <h4 class="mb-0">{{ prescription.addition or '—' }}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-light text-center p-3 border-danger">
+                            <small class="text-danger fw-bold">PD Right</small>
+                            <h4 class="mb-0 text-danger">{{ prescription.pd_right or '—' }}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-light text-center p-3 border-danger">
+                            <small class="text-danger fw-bold">PD Left</small>
+                            <h4 class="mb-0 text-danger">{{ prescription.pd_left or '—' }}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-light text-center p-3 border-danger">
+                            <small class="text-danger fw-bold">PD Total</small>
+                            <h4 class="mb-0 text-danger">{{ prescription.pd_total or '—' }}</h4>
+                        </div>
                     </div>
                 </div>
+
+                <!-- Lens Info -->
+                {% if prescription.lens_classification or prescription.lens_type_tags %}
+                <h5 class="border-bottom pb-2"><i class="fas fa-glasses me-1"></i> Lens Details</h5>
+                <div class="mb-3">
+                    {% if prescription.lens_classification %}
+                    <span class="badge bg-{{ 'success' if prescription.lens_classification == 'Ready Stock' else 'primary' }} fs-6 me-2">
+                        {{ prescription.lens_classification }}
+                    </span>
+                    {% endif %}
+                    {% if prescription.lens_type_tags %}
+                    {% for tag in prescription.lens_type_tags.split(',') %}
+                    <span class="badge bg-secondary me-1">{{ tag.strip() }}</span>
+                    {% endfor %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <!-- Scheduling -->
+                {% if prescription.next_visit_date or prescription.lens_expiry_date %}
+                <div class="row mb-3">
+                    {% if prescription.next_visit_date %}
+                    <div class="col-md-4">
+                        <div class="alert alert-info py-2">
+                            <i class="fas fa-calendar-check me-1"></i> <strong>Next Visit:</strong> {{ prescription.next_visit_date.strftime('%d %b %Y') }}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if prescription.lens_expiry_date %}
+                    <div class="col-md-4">
+                        <div class="alert alert-warning py-2">
+                            <i class="fas fa-clock me-1"></i> <strong>Lens Expiry:</strong> {{ prescription.lens_expiry_date.strftime('%d %b %Y') }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <!-- Notes -->
+                {% if prescription.notes %}
+                <div class="mb-3">
+                    <h6>Notes:</h6>
+                    <p class="text-muted">{{ prescription.notes }}</p>
+                </div>
+                {% endif %}
+
+                <!-- Prescription Image -->
+                {% if prescription.image_path %}
+                <div class="mb-3">
+                    <h6>Prescription Image:</h6>
+                    <img src="{{ url_for('static', filename=prescription.image_path.replace('static/', '')) }}" 
+                         class="img-fluid rounded border" style="max-height: 400px;" alt="Prescription Image">
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
 </div>
 
-<!-- Delete Modal -->
-<div class="modal fade" id="deletePrescriptionModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form action="{{ url_for('prescription.delete', id=prescription.id) }}" method="POST">
-                <div class="modal-header bg-danger text-white">
-                    <h5 class="modal-title">
-                        <i class="fas fa-exclamation-triangle me-2"></i>
-                        {% if current_user.is_admin %}Delete Prescription{% else %}Request Prescription Deletion{% endif %}
-                    </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body text-start">
-                    {% if current_user.is_admin %}
-                    <p class="text-danger fw-bold">Are you sure you want to permanently delete Prescription <strong>#{{ prescription.id }}</strong>?</p>
-                    {% else %}
-                    <p>Submit a deletion request for Prescription <strong>#{{ prescription.id }}</strong>. An Admin will review your request.</p>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Reason for Deletion <span class="text-danger">*</span></label>
-                        <textarea class="form-control" name="reason" rows="3" required placeholder="Please explain why this prescription should be deleted..."></textarea>
-                    </div>
-                    {% endif %}
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-danger">
-                        {% if current_user.is_admin %}Delete Permanently{% else %}Submit Request{% endif %}
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
+<style>
+    @media print {
+        .no-print { display: none !important; }
+        body { background-color: white; }
+        .card { box-shadow: none !important; border: none !important; }
+    }
+</style>
 {% endblock %}

@@ -2,7 +2,7 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-md-10">
         <div class="card shadow">
             <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
                 <h4 class="mb-0">Add Prescription for {{ customer.name }}</h4>
@@ -39,50 +39,134 @@
                         <input type="file" class="form-control" name="prescription_image" accept="image/*">
                     </div>
 
-                    <h5 class="border-bottom pb-2">Right Eye (OD)</h5>
+                    <!-- Referring Doctor -->
                     <div class="row mb-3">
-                        <div class="col-4">
-                            <label class="form-label">SPH</label>
-                            <input type="number" step="0.25" class="form-control" name="re_sph" id="re_sph"
-                                placeholder="e.g. -1.25">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label">CYL</label>
-                            <input type="number" step="0.25" class="form-control" name="re_cyl" id="re_cyl"
-                                placeholder="e.g. -0.50">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label">AXIS</label>
-                            <input type="number" step="1" min="0" max="180" class="form-control" name="re_axis"
-                                id="re_axis" placeholder="0-180">
+                        <div class="col-md-6">
+                            <label class="form-label"><i class="fas fa-user-md me-1"></i> Referred By (Doctor)</label>
+                            <input type="text" class="form-control" name="referred_by" id="referred_by" placeholder="e.g. Dr. Sharma">
                         </div>
                     </div>
 
-                    <h5 class="border-bottom pb-2 mt-4">Left Eye (OS)</h5>
+                    <!-- ── DISTANT VISION (DV) ── -->
+                    <h5 class="border-bottom pb-2 mt-3"><i class="fas fa-eye me-1"></i> Distant Vision (DV)</h5>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-bordered text-center">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Eye</th>
+                                    <th>SPH</th>
+                                    <th>CYL</th>
+                                    <th>AXIS</th>
+                                    <th>V/A</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="fw-bold text-primary">Right (OD)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_sph" id="re_sph" placeholder="-1.25"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_cyl" id="re_cyl" placeholder="-0.50"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_axis" id="re_axis" placeholder="0-180"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="re_visual_acuity" placeholder="6/6"></td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold text-success">Left (OS)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_sph" id="le_sph" placeholder="-1.25"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_cyl" id="le_cyl" placeholder="-0.50"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_axis" id="le_axis" placeholder="0-180"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="le_visual_acuity" placeholder="6/6"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- ── NEAR VISION (NV) ── -->
+                    <h5 class="border-bottom pb-2 mt-3"><i class="fas fa-book-reader me-1"></i> Near Vision (NV)</h5>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-bordered text-center">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Eye</th>
+                                    <th>SPH</th>
+                                    <th>CYL</th>
+                                    <th>AXIS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="fw-bold text-primary">Right (OD)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_nv_sph" id="re_nv_sph" placeholder="-1.25"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_nv_cyl" id="re_nv_cyl" placeholder="-0.50"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_nv_axis" id="re_nv_axis" placeholder="0-180"></td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold text-success">Left (OS)</td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_nv_sph" id="le_nv_sph" placeholder="-1.25"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_nv_cyl" id="le_nv_cyl" placeholder="-0.50"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_nv_axis" id="le_nv_axis" placeholder="0-180"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Addition & PD -->
                     <div class="row mb-3">
-                        <div class="col-4">
-                            <label class="form-label">SPH</label>
-                            <input type="number" step="0.25" class="form-control" name="le_sph" id="le_sph"
-                                placeholder="e.g. -1.25">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Addition (ADD)</label>
+                            <input type="number" step="0.25" min="0" class="form-control" name="addition" id="addition" placeholder="+1.00">
                         </div>
-                        <div class="col-4">
-                            <label class="form-label">CYL</label>
-                            <input type="number" step="0.25" class="form-control" name="le_cyl" id="le_cyl"
-                                placeholder="e.g. -0.50">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold text-danger"><i class="fas fa-ruler-horizontal me-1"></i> PD (Right)</label>
+                            <input type="number" step="0.5" min="20" max="40" class="form-control" name="pd_right" id="pd_right" placeholder="32.0">
                         </div>
-                        <div class="col-4">
-                            <label class="form-label">AXIS</label>
-                            <input type="number" step="1" min="0" max="180" class="form-control" name="le_axis"
-                                id="le_axis" placeholder="0-180">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold text-danger"><i class="fas fa-ruler-horizontal me-1"></i> PD (Left)</label>
+                            <input type="number" step="0.5" min="20" max="40" class="form-control" name="pd_left" id="pd_left" placeholder="32.0">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold text-danger"><i class="fas fa-ruler-horizontal me-1"></i> PD (Total)</label>
+                            <input type="number" step="0.5" min="50" max="80" class="form-control" name="pd_total" id="pd_total" placeholder="64.0">
                         </div>
                     </div>
 
-                    <h5 class="border-bottom pb-2 mt-4">Addition (Near Vision)</h5>
+                    <!-- Lens Classification & Tags -->
+                    <h5 class="border-bottom pb-2 mt-4"><i class="fas fa-glasses me-1"></i> Lens Details</h5>
                     <div class="row mb-3">
-                        <div class="col-md-4 col-6">
-                            <label class="form-label">ADD</label>
-                            <input type="number" step="0.25" min="0" class="form-control" name="addition" id="addition"
-                                placeholder="e.g. +1.00">
+                        <div class="col-md-4">
+                            <label class="form-label">Lens Classification</label>
+                            <div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="lens_classification" value="Ready Stock" id="lensReady">
+                                    <label class="form-check-label" for="lensReady">Ready Stock</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="lens_classification" value="Rx" id="lensRx">
+                                    <label class="form-check-label" for="lensRx">Rx (Custom Order)</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Lens Type Tags</label>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for tag in ['Single Vision', 'Bifocal', 'Progressive', 'AR Coat', 'Blue Cut', 'Photochromic', 'Tinted', 'UV Protection', 'Contact Lens'] %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="lens_type_tags[]" value="{{ tag }}" id="tag_{{ loop.index }}">
+                                    <label class="form-check-label" for="tag_{{ loop.index }}">{{ tag }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scheduling -->
+                    <h5 class="border-bottom pb-2 mt-4"><i class="fas fa-calendar-alt me-1"></i> Scheduling</h5>
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Next Visit Date</label>
+                            <input type="date" class="form-control" name="next_visit_date">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Lens Expiry Date</label>
+                            <input type="date" class="form-control" name="lens_expiry_date">
                         </div>
                     </div>
 
@@ -108,14 +192,13 @@
         const btnScan = document.getElementById('btnScan');
 
         if (fileInput.files.length === 0) {
-            statusDiv.innerHTML = '<span class="text-danger">Please create select an image first.</span>';
+            statusDiv.innerHTML = '<span class="text-danger">Please select an image first.</span>';
             return;
         }
 
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
 
-        // UI Feedback
         btnScan.disabled = true;
         btnScan.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Scanning...';
         statusDiv.innerHTML = 'Uploading and processing... This may take a few seconds.';
@@ -129,16 +212,25 @@
             const result = await response.json();
 
             if (response.ok) {
-                statusDiv.innerHTML = '<span class="text-success"><i class="fas fa-check"></i> Scan complete! verify numbers.</span>';
+                statusDiv.innerHTML = '<span class="text-success"><i class="fas fa-check"></i> Scan complete! Verify numbers.</span>';
 
-                // Auto-fill fields if keys exist
+                // Auto-fill DV fields
                 if (result.re_sph) document.getElementById('re_sph').value = result.re_sph;
                 if (result.re_cyl) document.getElementById('re_cyl').value = result.re_cyl;
                 if (result.re_axis) document.getElementById('re_axis').value = result.re_axis;
-
                 if (result.le_sph) document.getElementById('le_sph').value = result.le_sph;
                 if (result.le_cyl) document.getElementById('le_cyl').value = result.le_cyl;
                 if (result.le_axis) document.getElementById('le_axis').value = result.le_axis;
+                if (result.re_nv_sph) document.getElementById('re_nv_sph').value = result.re_nv_sph;
+                if (result.re_nv_cyl) document.getElementById('re_nv_cyl').value = result.re_nv_cyl;
+                if (result.re_nv_axis) document.getElementById('re_nv_axis').value = result.re_nv_axis;
+                if (result.le_nv_sph) document.getElementById('le_nv_sph').value = result.le_nv_sph;
+                if (result.le_nv_cyl) document.getElementById('le_nv_cyl').value = result.le_nv_cyl;
+                if (result.le_nv_axis) document.getElementById('le_nv_axis').value = result.le_nv_axis;
+                if (result.addition) document.getElementById('addition').value = result.addition;
+                if (result.pd_right) document.getElementById('pd_right').value = result.pd_right;
+                if (result.pd_left) document.getElementById('pd_left').value = result.pd_left;
+                if (result.pd_total) document.getElementById('pd_total').value = result.pd_total;
 
             } else {
                 statusDiv.innerHTML = `<span class="text-danger">Error: ${result.error}</span>`;

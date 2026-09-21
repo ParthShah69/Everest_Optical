@@ -9,92 +9,98 @@
             </div>
             <div class="card-body">
                 <form method="POST" id="editOrderForm">
-
                     <!-- Top Section -->
                     <div class="row mb-3">
-                        <div class="col-md-6">
+                        <div class="col-md-3">
                             <label class="form-label">Customer</label>
                             <input type="text" class="form-control" value="{{ order.customer.name }}" disabled>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <label class="form-label">Delivery Date</label>
                             <input type="date" class="form-control" name="delivery_date"
                                 value="{{ order.delivery_date.strftime('%Y-%m-%d') if order.delivery_date }}">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
+                            <label class="form-label">Delivery Time</label>
+                            <input type="time" class="form-control" name="delivery_time"
+                                value="{{ order.delivery_time.strftime('%H:%M') if order.delivery_time }}">
+                        </div>
+                        <div class="col-md-2">
                             <label class="form-label">Status</label>
                             <select class="form-select" name="status">
-                                <option value="Pending" {{ 'selected' if order.status=='Pending' }}>Pending</option>
-                                <option value="In Progress" {{ 'selected' if order.status=='In Progress' }}>In Progress
-                                </option>
-                                <option value="Ready" {{ 'selected' if order.status=='Ready' }}>Ready</option>
-                                <option value="Delivered" {{ 'selected' if order.status=='Delivered' }}>Delivered
-                                </option>
-                                <option value="Cancelled" {{ 'selected' if order.status=='Cancelled' }}>Cancelled
-                                </option>
+                                {% for s in all_statuses %}
+                                <option value="{{ s }}" {{ 'selected' if order.status == s }}>{{ s }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Delivery Mode</label>
+                            <select class="form-select" name="delivery_mode">
+                                <option value="Self" {{ 'selected' if order.delivery_mode=='Self' }}>Self Pickup</option>
+                                <option value="Courier" {{ 'selected' if order.delivery_mode=='Courier' }}>Courier</option>
+                                <option value="Home Delivery" {{ 'selected' if order.delivery_mode=='Home Delivery' }}>Home Delivery</option>
                             </select>
                         </div>
                     </div>
-
-                    <div class="row mb-3">
+                    <div class="row mb-3 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label">Delivery in days</label>
+                            <input type="number" class="form-control" name="delivery_in_days" min="0" step="1" value="{{ order.delivery_in_days if order.delivery_in_days is not none else '' }}" placeholder="e.g. 3">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Additional hours</label>
+                            <input type="number" class="form-control" name="delivery_in_hours" min="0" step="1" value="{{ order.delivery_in_hours if order.delivery_in_hours is not none else '' }}" placeholder="e.g. 4">
+                        </div>
                         <div class="col-md-6">
-                            <label class="form-label">Delivery Mode</label>
-                            <select class="form-select" name="delivery_mode">
-                                <option value="Self" {{ 'selected' if order.delivery_mode=='Self' }}>Self Pickup (Store)
-                                </option>
-                                <option value="Courier" {{ 'selected' if order.delivery_mode=='Courier' }}>Courier
-                                </option>
-                                <option value="Home Delivery" {{ 'selected' if order.delivery_mode=='Home Delivery' }}>
-                                    Home Delivery (Staff)</option>
-                            </select>
+                            <div class="form-text pb-2"><i class="fas fa-clock me-1"></i>Changing either value recalculates delivery date/time from now. Leave both blank to use the manual schedule.</div>
                         </div>
                     </div>
 
                     <hr>
 
-                    <!-- Order Items -->
-                    <h5 class="mb-3">Order Items</h5>
+                    <!-- Order Items with Inventory Search -->
+                    <h5 class="mb-3"><i class="fas fa-list me-1"></i> Order Items</h5>
                     <div class="table-responsive mb-3">
                         <table class="table table-bordered mobile-cards" id="itemsTable">
                             <thead class="table-light">
                                 <tr>
-                                    <th>Item Description (Note: Manual)</th>
-                                    <th width="150">Quantity</th>
-                                    <th width="150">Unit Price</th>
-                                    <th width="150">Total</th>
+                                    <th>Item (Type to search inventory)</th>
+                                    <th width="80">Qty</th>
+                                    <th width="120">Unit Price</th>
+                                    <th width="80">Disc%</th>
+                                    <th width="100">Disc Amt</th>
+                                    <th width="120">Total</th>
                                     <th width="50"></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for item in order.items %}
                                 <tr>
-                                    <td data-label="Item"><input type="text" class="form-control" name="item_desc[]"
-                                            required value="Item #{{ item.id }} (Update Desc logic needed)"
-                                            placeholder="Description"></td>
-                                    <td data-label="Qty"><input type="number" class="form-control qty" name="quantity[]"
-                                            value="{{ item.quantity }}" min="1" required></td>
-                                    <td data-label="Price"><input type="number" class="form-control price"
-                                            name="unit_price[]" value="{{ item.unit_price }}" min="0" step="0.01"
-                                            required></td>
-                                    <td data-label="Total"><input type="text" class="form-control row-total" readonly
-                                            value="{{ (item.quantity * item.unit_price) }}"></td>
-                                    <td data-label="Action"><button type="button"
-                                            class="btn btn-danger btn-sm remove-row"><i
-                                                class="fas fa-times"></i></button></td>
+                                    <td data-label="Item" style="position:relative;">
+                                        <input type="text" class="form-control item-search" name="item_desc[]" required value="{{ item.display_name }}">
+                                        <input type="hidden" name="inventory_id[]" class="inv-id" value="{{ item.inventory_id or '' }}">
+                                        <div class="inv-dropdown position-absolute w-100 bg-white border rounded shadow-sm" style="display:none; z-index:100; max-height:200px; overflow-y:auto;"></div>
+                                    </td>
+                                    <td data-label="Qty"><input type="number" class="form-control qty" name="quantity[]" value="{{ item.quantity }}" min="1" required></td>
+                                    <td data-label="Price"><input type="number" class="form-control price" name="unit_price[]" value="{{ item.unit_price }}" min="0" step="0.01" required></td>
+                                    <td data-label="Disc%"><input type="number" class="form-control disc-pct" name="item_discount_percent[]" value="{{ item.discount_percent or 0 }}" min="0" max="100" step="0.01"></td>
+                                    <td data-label="Disc Amt"><input type="number" class="form-control disc-amt" name="item_discount_amount[]" value="{{ item.discount_amount or 0 }}" min="0" step="0.01"></td>
+                                    <td data-label="Total"><input type="text" class="form-control row-total" readonly value="{{ '{:.2f}'.format(item.total_price) }}"></td>
+                                    <td data-label="Action"><button type="button" class="btn btn-danger btn-sm remove-row"><i class="fas fa-times"></i></button></td>
                                 </tr>
                                 {% else %}
                                 <tr>
-                                    <td data-label="Item"><input type="text" class="form-control" name="item_desc[]"
-                                            required placeholder="Description"></td>
-                                    <td data-label="Qty"><input type="number" class="form-control qty" name="quantity[]"
-                                            value="1" min="1" required></td>
-                                    <td data-label="Price"><input type="number" class="form-control price"
-                                            name="unit_price[]" value="0" min="0" step="0.01" required></td>
-                                    <td data-label="Total"><input type="text" class="form-control row-total" readonly
-                                            value="0.00"></td>
-                                    <td data-label="Action"><button type="button"
-                                            class="btn btn-danger btn-sm remove-row"><i
-                                                class="fas fa-times"></i></button></td>
+                                    <td data-label="Item" style="position:relative;">
+                                        <input type="text" class="form-control item-search" name="item_desc[]" required placeholder="Type to search...">
+                                        <input type="hidden" name="inventory_id[]" class="inv-id" value="">
+                                        <div class="inv-dropdown position-absolute w-100 bg-white border rounded shadow-sm" style="display:none; z-index:100; max-height:200px; overflow-y:auto;"></div>
+                                    </td>
+                                    <td data-label="Qty"><input type="number" class="form-control qty" name="quantity[]" value="1" min="1" required></td>
+                                    <td data-label="Price"><input type="number" class="form-control price" name="unit_price[]" value="0" min="0" step="0.01" required></td>
+                                    <td data-label="Disc%"><input type="number" class="form-control disc-pct" name="item_discount_percent[]" value="0" min="0" max="100" step="0.01"></td>
+                                    <td data-label="Disc Amt"><input type="number" class="form-control disc-amt" name="item_discount_amount[]" value="0" min="0" step="0.01"></td>
+                                    <td data-label="Total"><input type="text" class="form-control row-total" readonly value="0.00"></td>
+                                    <td data-label="Action"><button type="button" class="btn btn-danger btn-sm remove-row"><i class="fas fa-times"></i></button></td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -108,37 +114,63 @@
 
                     <!-- Billing Logic -->
                     <div class="row justify-content-end">
-                        <div class="col-md-4">
+                        <div class="col-md-5">
                             <div class="mb-2 row">
-                                <label class="col-sm-6 col-form-label text-end fw-bold">Subtotal:</label>
-                                <div class="col-sm-6">
+                                <label class="col-sm-5 col-form-label text-end fw-bold">Subtotal:</label>
+                                <div class="col-sm-7">
                                     <input type="number" class="form-control" id="subtotalAmount" readonly value="0.00">
                                 </div>
                             </div>
                             <div class="mb-2 row">
-                                <label class="col-sm-6 col-form-label text-end fw-bold text-success">Discount:</label>
-                                <div class="col-sm-6">
+                                <label class="col-sm-5 col-form-label text-end fw-bold text-success">Discount:</label>
+                                <div class="col-sm-7">
                                     <input type="number" class="form-control text-success" id="discountAmount"
                                         name="discount" value="{{ order.discount or 0 }}" min="0" step="0.01">
                                 </div>
                             </div>
+                            
+                            <!-- Tax -->
+                            <div class="mb-2 row">
+                                <label class="col-sm-5 col-form-label text-end fw-bold">Tax:</label>
+                                <div class="col-sm-4">
+                                    <select class="form-select form-select-sm" name="tax_mode" id="taxMode">
+                                        <option value="not_apply" {{ 'selected' if order.tax_mode == 'not_apply' }}>Not Apply</option>
+                                        <option value="calculated" {{ 'selected' if order.tax_mode == 'calculated' }}>Calculated</option>
+                                        <option value="not_calculated" {{ 'selected' if order.tax_mode == 'not_calculated' }}>Not Calculated</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-3">
+                                    <input type="number" class="form-control form-control-sm" id="taxPercent" name="tax_percent" value="{{ order.tax_percent or 0 }}" min="0" max="100" step="0.01" placeholder="%" list="taxRateOptions">
+                                </div>
+                            </div>
+                            <datalist id="taxRateOptions">
+                                {% for config in tax_configs %}
+                                <option value="{{ config.rate }}" label="{{ config.name }}"></option>
+                                {% endfor %}
+                            </datalist>
+                            <div class="mb-2 row" id="taxAmountRow" style="{{ '' if order.tax_mode == 'calculated' else 'display:none;' }}">
+                                <label class="col-sm-5 col-form-label text-end">Tax Amount:</label>
+                                <div class="col-sm-7">
+                                    <input type="number" class="form-control" id="taxAmountDisplay" readonly value="{{ order.tax_amount or 0 }}">
+                                </div>
+                            </div>
+
                             <div class="mb-2 row border-top pt-2">
-                                <label class="col-sm-6 col-form-label text-end fw-bold">Grand Total:</label>
-                                <div class="col-sm-6">
-                                    <input type="number" class="form-control fw-bold" id="totalAmount" readonly
-                                        value="{{ order.total_amount }}">
+                                <label class="col-sm-5 col-form-label text-end fw-bold">Grand Total:</label>
+                                <div class="col-sm-7">
+                                    <input type="number" class="form-control fw-bold" id="totalAmount" readonly value="{{ order.total_amount }}">
                                 </div>
                             </div>
                             <div class="mb-2 row">
-                                <label class="col-sm-6 col-form-label text-end fw-bold">Advance:</label>
-                                <div class="col-sm-6">
+                                <label class="col-sm-5 col-form-label text-end fw-bold">Advance:</label>
+                                <div class="col-sm-7">
                                     <input type="number" class="form-control" id="advanceAmount" name="advance_amount"
                                         value="{{ order.advance_amount }}" min="0" step="0.01">
                                 </div>
                             </div>
                             <div class="mb-3 row">
-                                <label class="col-sm-6 col-form-label text-end fw-bold text-danger">Balance:</label>
-                                <div class="col-sm-6">
+                                <label class="col-sm-5 col-form-label text-end fw-bold text-danger">Balance:</label>
+                                <div class="col-sm-7">
                                     <input type="text" class="form-control fw-bold text-danger" id="balanceAmount"
                                         readonly value="0.00">
                                 </div>
@@ -197,16 +229,73 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        const table = document.querySelector('#itemsTable tbody');
+        // --- Inventory Search Autocomplete ---
+        function setupInventorySearch(input) {
+            let timeout = null;
+            const dropdown = input.parentElement.querySelector('.inv-dropdown');
+            const hiddenId = input.parentElement.querySelector('.inv-id');
 
-        // Initial Calculation to set Subtotal/Balance correctly on load
+            input.addEventListener('input', function() {
+                clearTimeout(timeout);
+                const q = this.value.trim();
+                if (q.length < 1) { dropdown.style.display = 'none'; return; }
+                
+                timeout = setTimeout(() => {
+                    fetch(`/api/inventory/search?q=${encodeURIComponent(q)}`)
+                        .then(r => r.json())
+                        .then(items => {
+                            if (items.length === 0) { dropdown.style.display = 'none'; return; }
+                            let html = '';
+                            items.forEach(item => {
+                                const stockClass = item.is_low_stock ? 'text-danger' : 'text-success';
+                                html += `<div class="px-3 py-2 border-bottom inv-option" style="cursor:pointer;" 
+                                          data-id="${item.id}" data-name="${item.name}" data-price="${item.selling_price}" data-qty="${item.quantity}">
+                                    <strong>${item.name}</strong>
+                                    <span class="float-end">₹${item.selling_price} <small class="${stockClass}">(Stock: ${item.quantity})</small></span>
+                                </div>`;
+                            });
+                            dropdown.innerHTML = html;
+                            dropdown.style.display = 'block';
+
+                            dropdown.querySelectorAll('.inv-option').forEach(opt => {
+                                opt.addEventListener('click', function() {
+                                    input.value = this.dataset.name;
+                                    hiddenId.value = this.dataset.id;
+                                    const row = input.closest('tr');
+                                    row.querySelector('.price').value = this.dataset.price;
+                                    dropdown.style.display = 'none';
+                                    calculateRowTotal(row);
+                                    calculateTotals();
+                                });
+                            });
+                        });
+                }, 200);
+            });
+
+            document.addEventListener('click', function(e) {
+                if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        }
+
+        document.querySelectorAll('.item-search').forEach(setupInventorySearch);
+
+        const table = document.querySelector('#itemsTable tbody');
         calculateTotals();
 
         document.getElementById('addRow').addEventListener('click', function () {
             const newRow = table.rows[0].cloneNode(true);
-            newRow.querySelectorAll('input').forEach(input => input.value = input.classList.contains('qty') ? 1 : '');
+            newRow.querySelectorAll('input').forEach(input => {
+                if (input.classList.contains('qty')) input.value = 1;
+                else if (input.classList.contains('inv-id')) input.value = '';
+                else input.value = '';
+            });
             newRow.querySelector('.row-total').value = '0.00';
+            newRow.querySelector('.inv-dropdown').style.display = 'none';
+            newRow.querySelector('.inv-dropdown').innerHTML = '';
             table.appendChild(newRow);
+            setupInventorySearch(newRow.querySelector('.item-search'));
         });
 
         table.addEventListener('click', function (e) {
@@ -219,17 +308,33 @@
         });
 
         document.querySelector('form').addEventListener('input', function (e) {
-            if (e.target.classList.contains('qty') || e.target.classList.contains('price')) {
+            if (e.target.classList.contains('qty') || e.target.classList.contains('price') || 
+                e.target.classList.contains('disc-pct') || e.target.classList.contains('disc-amt')) {
                 const row = e.target.closest('tr');
-                const qty = parseFloat(row.querySelector('.qty').value) || 0;
-                const price = parseFloat(row.querySelector('.price').value) || 0;
-                row.querySelector('.row-total').value = (qty * price).toFixed(2);
+                calculateRowTotal(row);
                 calculateTotals();
             }
-            if (e.target.id === 'advanceAmount' || e.target.id === 'discountAmount') {
+            if (e.target.id === 'advanceAmount' || e.target.id === 'discountAmount' ||
+                e.target.id === 'taxMode' || e.target.id === 'taxPercent') {
                 calculateTotals();
             }
         });
+
+        document.getElementById('taxMode')?.addEventListener('change', function() {
+            document.getElementById('taxAmountRow').style.display = this.value === 'calculated' ? 'flex' : 'none';
+            calculateTotals();
+        });
+
+        function calculateRowTotal(row) {
+            const qty = parseFloat(row.querySelector('.qty').value) || 0;
+            const price = parseFloat(row.querySelector('.price').value) || 0;
+            const discPct = parseFloat(row.querySelector('.disc-pct').value) || 0;
+            const discAmt = parseFloat(row.querySelector('.disc-amt').value) || 0;
+            let lineTotal = qty * price;
+            if (discAmt > 0) lineTotal -= discAmt;
+            else if (discPct > 0) lineTotal -= (lineTotal * discPct / 100);
+            row.querySelector('.row-total').value = lineTotal.toFixed(2);
+        }
 
         function calculateTotals() {
             let subtotal = 0;
@@ -239,9 +344,16 @@
             document.getElementById('subtotalAmount').value = subtotal.toFixed(2);
 
             const discount = parseFloat(document.getElementById('discountAmount').value) || 0;
-            let total = subtotal - discount;
-            if (total < 0) total = 0;
+            const taxMode = document.getElementById('taxMode').value;
+            const taxPercent = parseFloat(document.getElementById('taxPercent').value) || 0;
+            let taxAmount = 0;
+            if (taxMode === 'calculated' && taxPercent > 0) {
+                taxAmount = (subtotal - discount) * taxPercent / 100;
+            }
+            document.getElementById('taxAmountDisplay').value = taxAmount.toFixed(2);
 
+            let total = subtotal - discount + taxAmount;
+            if (total < 0) total = 0;
             document.getElementById('totalAmount').value = total.toFixed(2);
 
             const advance = parseFloat(document.getElementById('advanceAmount').value) || 0;

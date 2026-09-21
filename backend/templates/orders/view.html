@@ -5,10 +5,26 @@
     <div class="col-md-9">
 
         <!-- Action Buttons -->
-        <div class="d-flex justify-content-end mb-3 no-print">
-            <button onclick="window.print()" class="btn btn-secondary me-2"><i class="fas fa-print"></i> Print</button>
-            <a href="{{ url_for('order.edit', id=order.id) }}" class="btn btn-warning me-2"><i class="fas fa-edit"></i> Edit</a>
-            <button type="button" class="btn btn-outline-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteOrderModal">
+        <div class="d-flex justify-content-end mb-3 no-print flex-wrap gap-2">
+            {% if whatsapp_confirm_url %}
+            <a href="{{ whatsapp_confirm_url }}" target="_blank" class="btn btn-success" title="Send Order on WhatsApp">
+                <i class="fab fa-whatsapp"></i> WhatsApp
+            </a>
+            {% endif %}
+            {% if order.status in ['Ready', 'Out for Shipment'] and whatsapp_ready_url %}
+            <a href="{{ whatsapp_ready_url }}" target="_blank" class="btn btn-outline-success" title="Notify Ready">
+                <i class="fab fa-whatsapp"></i> Ready Notify
+            </a>
+            {% endif %}
+            <div class="btn-group">
+                <a href="{{ url_for('order.print_invoice', id=order.id) }}" target="_blank" class="btn btn-secondary"><i class="fas fa-file-invoice"></i> Final Invoice</a>
+                <a href="{{ url_for('order.print_job_slip', id=order.id) }}" target="_blank" class="btn btn-outline-secondary"><i class="fas fa-tools"></i> Job Slip</a>
+            </div>
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#paymentModal">
+                <i class="fas fa-credit-card"></i> Record Payment
+            </button>
+            <a href="{{ url_for('order.edit', id=order.id) }}" class="btn btn-warning"><i class="fas fa-edit"></i> Edit</a>
+            <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteOrderModal">
                 <i class="fas fa-trash-alt me-1"></i> {% if current_user.is_admin %}Delete{% else %}Request Deletion{% endif %}
             </button>
             <a href="{{ url_for('order.index') }}" class="btn btn-outline-primary">Back to Orders</a>
@@ -48,6 +64,69 @@
             </div>
         </div>
 
+        <!-- Payment Modal -->
+        <div class="modal fade no-print" id="paymentModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <form action="{{ url_for('payment.add_payment', order_id=order.id) }}" method="POST">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title"><i class="fas fa-credit-card me-2"></i> Bill Payment Details</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold">Total Amount</label>
+                                    <input type="text" class="form-control" value="₹{{ order.total_amount }}" disabled>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold text-success">Already Paid</label>
+                                    <input type="text" class="form-control text-success" value="₹{{ order.total_paid }}" disabled>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold text-danger">Remaining Due</label>
+                                    <input type="text" class="form-control text-danger fw-bold" value="₹{{ '{:.2f}'.format(order.remaining_due) }}" disabled>
+                                </div>
+                            </div>
+
+                            <input type="hidden" name="payment_type" value="partial">
+
+                            <h6 class="border-bottom pb-2">Payment Entries (Split across methods)</h6>
+                            <div id="paymentRows">
+                                <div class="row mb-2 payment-row">
+                                    <div class="col-md-3">
+                                        <select class="form-select form-select-sm" name="payment_method[]">
+                                            <option value="Cash">💵 Cash</option>
+                                            <option value="Card">💳 Card</option>
+                                            <option value="UPI">📱 UPI / QR</option>
+                                            <option value="Paytm">📲 Paytm / Wallet</option>
+                                            <option value="Bank">🏦 Bank Transfer</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input type="number" class="form-control form-control-sm" name="payment_amount[]" placeholder="Amount" min="0" step="0.01" value="{{ '{:.2f}'.format(order.remaining_due) }}">
+                                    </div>
+                                    <div class="col-md-5">
+                                        <input type="text" class="form-control form-control-sm" name="payment_remark[]" placeholder="Remark (optional)">
+                                    </div>
+                                    <div class="col-md-1">
+                                        <button type="button" class="btn btn-sm btn-outline-danger remove-payment-row" title="Remove"><i class="fas fa-times"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm mt-2" id="addPaymentRow">
+                                <i class="fas fa-plus"></i> Add Split Payment
+                            </button>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-check"></i> Record Payment</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         <div class="card shadow-lg border-0" id="invoiceArea">
             <div class="card-body p-5">
 
@@ -56,14 +135,13 @@
                     <div class="col-md-6">
                         <h2 class="fw-bold text-primary">Optical ERP</h2>
                         <p class="mb-0">Store Address Line 1</p>
-                        <p>Phone: +1 234 567 890</p>
+                        <p>Phone: +91 XXXX XXXXXX</p>
                     </div>
                     <div class="col-md-6 text-end">
                         <h4 class="mb-1">INVOICE</h4>
                         <p class="text-muted mb-1">Order #: {{ order.order_no }}</p>
                         <p class="text-muted mb-1">Date: {{ order.issue_date.strftime('%d %b %Y') }}</p>
-                        <span class="badge bg-{{ 'success' if order.status == 'Delivered' else 'warning' }} fs-6">{{
-                            order.status }}</span>
+                        <span class="badge bg-{{ order.status_color }} fs-6">{{ order.status }}</span>
                     </div>
                 </div>
 
@@ -72,8 +150,25 @@
                     <div class="col-md-6">
                         <h5 class="text-secondary">Bill To:</h5>
                         <h4 class="mb-0">{{ order.customer.name }}</h4>
-                        <p class="mb-0">{{ order.customer.care_of }}</p>
-                        <p>{{ order.customer.phone }}</p>
+                        {% if order.customer.care_of %}<p class="mb-0">c/o {{ order.customer.care_of }}</p>{% endif %}
+                        <p class="mb-0">{{ order.customer.phone }}</p>
+                        {% if order.customer.full_address %}<p class="text-muted small">{{ order.customer.full_address }}</p>{% endif %}
+                    </div>
+                    <div class="col-md-6 text-end">
+                        {% if order.delivery_date %}
+                        <p class="mb-1"><strong>Delivery Date:</strong> {{ order.delivery_date.strftime('%d %b %Y') }}</p>
+                        {% endif %}
+                        {% if order.delivery_time %}
+                        <p class="mb-1"><strong>Delivery Time:</strong> {{ order.delivery_time.strftime('%I:%M %p') }}</p>
+                        {% endif %}
+                        {% if order.delivery_in_days or order.delivery_in_hours %}
+                        <p class="mb-1"><strong>Promised in:</strong>
+                            {% if order.delivery_in_days %}{{ order.delivery_in_days }} day{{ '' if order.delivery_in_days == 1 else 's' }}{% endif %}
+                            {% if order.delivery_in_days and order.delivery_in_hours %}, {% endif %}
+                            {% if order.delivery_in_hours %}{{ order.delivery_in_hours }} hour{{ '' if order.delivery_in_hours == 1 else 's' }}{% endif %}
+                        </p>
+                        {% endif %}
+                        <p class="mb-0"><strong>Delivery Mode:</strong> {{ order.delivery_mode }}</p>
                     </div>
                 </div>
 
@@ -82,6 +177,7 @@
                 <div class="alert alert-light border mb-4">
                     <strong>Rx used:</strong> RE: {{ order.prescription.re_sph }}/{{ order.prescription.re_cyl }} | LE:
                     {{ order.prescription.le_sph }}/{{ order.prescription.le_cyl }}
+                    {% if order.prescription.pd_total %}| <strong>PD:</strong> {{ order.prescription.pd_total }}{% endif %}
                 </div>
                 {% endif %}
 
@@ -92,6 +188,7 @@
                             <th>Item / Description</th>
                             <th class="text-center">Qty</th>
                             <th class="text-end">Unit Price</th>
+                            <th class="text-end">Disc</th>
                             <th class="text-end">Total</th>
                         </tr>
                     </thead>
@@ -101,7 +198,16 @@
                             <td>{{ item.display_name }}</td>
                             <td class="text-center">{{ item.quantity }}</td>
                             <td class="text-end">₹{{ item.unit_price }}</td>
-                            <td class="text-end">₹{{ item.total_price }}</td>
+                            <td class="text-end">
+                                {% if item.discount_amount and item.discount_amount > 0 %}
+                                ₹{{ item.discount_amount }}
+                                {% elif item.discount_percent and item.discount_percent > 0 %}
+                                {{ item.discount_percent }}%
+                                {% else %}
+                                —
+                                {% endif %}
+                            </td>
+                            <td class="text-end">₹{{ '{:.2f}'.format(item.total_price) }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -111,25 +217,71 @@
                 <div class="row justify-content-end">
                     <div class="col-md-5">
                         <table class="table table-borderless">
+                            {% if order.discount and order.discount > 0 %}
+                            <tr>
+                                <td class="text-end">Discount:</td>
+                                <td class="text-end text-success">- ₹{{ order.discount }}</td>
+                            </tr>
+                            {% endif %}
+                            {% if order.tax_mode == 'calculated' and order.tax_amount and order.tax_amount > 0 %}
+                            <tr>
+                                <td class="text-end">Tax ({{ order.tax_percent }}%):</td>
+                                <td class="text-end">+ ₹{{ order.tax_amount }}</td>
+                            </tr>
+                            {% endif %}
                             <tr>
                                 <td class="text-end fw-bold">Total Amount:</td>
-                                <td class="text-end fw-bold">{{ order.total_amount }}</td>
+                                <td class="text-end fw-bold">₹{{ order.total_amount }}</td>
                             </tr>
                             <tr>
-                                <td class="text-end">Advance Paid:</td>
-                                <td class="text-end text-success">- {{ order.advance_amount }}</td>
+                                <td class="text-end">Total Paid:</td>
+                                <td class="text-end text-success">- ₹{{ '{:.2f}'.format(order.total_paid) }}</td>
                             </tr>
                             <tr class="border-top">
                                 <td class="text-end fw-bold fs-5 text-danger">Balance Due:</td>
-                                <td class="text-end fw-bold fs-5 text-danger">{{ order.balance_amount }}</td>
+                                <td class="text-end fw-bold fs-5 text-danger">₹{{ '{:.2f}'.format(order.remaining_due) }}</td>
                             </tr>
                         </table>
                     </div>
                 </div>
 
+                <!-- Payment History -->
+                {% if order.payments and order.payments|length > 0 %}
+                <div class="mt-4 border-top pt-3">
+                    <h6><i class="fas fa-history me-1"></i> Payment History</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Receipt #</th>
+                                    <th>Date</th>
+                                    <th>Method</th>
+                                    <th>Amount</th>
+                                    <th>Remark</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in order.payments %}
+                                <tr>
+                                    <td><a href="{{ url_for('payment.print_receipt', payment_id=p.id) }}" target="_blank" class="text-decoration-none">{{ p.receipt_no }}</a></td>
+                                    <td>{{ p.created_at.strftime('%d %b %Y %I:%M %p') if p.created_at else '' }}</td>
+                                    <td>
+                                        {% if p.payment_method == 'Cash' %}💵{% elif p.payment_method == 'Card' %}💳{% elif p.payment_method == 'UPI' %}📱{% elif p.payment_method == 'Paytm' %}📲{% else %}🏦{% endif %}
+                                        {{ p.payment_method }}
+                                    </td>
+                                    <td class="text-success fw-bold">₹{{ p.amount }}</td>
+                                    <td class="text-muted">{{ p.remark or '' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
             </div>
             <div class="card-footer bg-light text-center text-muted p-3">
-                <small>Thank you for your business!</small>
+                <small>Thank you for your business! 👓</small>
             </div>
         </div>
     </div>
@@ -137,18 +289,33 @@
 
 <style>
     @media print {
-        .no-print {
-            display: none !important;
-        }
-
-        body {
-            background-color: white;
-        }
-
-        .card {
-            box-shadow: none !important;
-            border: none !important;
-        }
+        .no-print { display: none !important; }
+        body { background-color: white; }
+        .card { box-shadow: none !important; border: none !important; }
     }
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Add split payment row
+    document.getElementById('addPaymentRow')?.addEventListener('click', function() {
+        const container = document.getElementById('paymentRows');
+        const firstRow = container.querySelector('.payment-row');
+        const newRow = firstRow.cloneNode(true);
+        newRow.querySelectorAll('input').forEach(i => i.value = '');
+        newRow.querySelector('select').selectedIndex = 0;
+        container.appendChild(newRow);
+    });
+
+    // Remove payment row
+    document.getElementById('paymentRows')?.addEventListener('click', function(e) {
+        if (e.target.closest('.remove-payment-row')) {
+            const rows = document.querySelectorAll('.payment-row');
+            if (rows.length > 1) {
+                e.target.closest('.payment-row').remove();
+            }
+        }
+    });
+});
+</script>
 {% endblock %}

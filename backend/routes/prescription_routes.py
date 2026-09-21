@@ -6,6 +6,7 @@ from models.customer import Customer
 from services.ocr_service import process_prescription_image, allowed_file
 import os
 import uuid
+from datetime import datetime
 from werkzeug.utils import secure_filename
 
 prescription_bp = Blueprint('prescription', __name__, url_prefix='/prescriptions')
@@ -24,13 +25,45 @@ def add(customer_id):
     
     if request.method == 'POST':
         try:
+            # DV (Distant Vision) fields
             re_sph = request.form.get('re_sph') or None
             re_cyl = request.form.get('re_cyl') or None
             re_axis = request.form.get('re_axis') or None
+            re_visual_acuity = request.form.get('re_visual_acuity') or None
             le_sph = request.form.get('le_sph') or None
             le_cyl = request.form.get('le_cyl') or None
             le_axis = request.form.get('le_axis') or None
+            le_visual_acuity = request.form.get('le_visual_acuity') or None
+            
+            # NV (Near Vision) fields
+            re_nv_sph = request.form.get('re_nv_sph') or None
+            re_nv_cyl = request.form.get('re_nv_cyl') or None
+            re_nv_axis = request.form.get('re_nv_axis') or None
+            le_nv_sph = request.form.get('le_nv_sph') or None
+            le_nv_cyl = request.form.get('le_nv_cyl') or None
+            le_nv_axis = request.form.get('le_nv_axis') or None
+            
             addition = request.form.get('addition') or None
+            
+            # Pupillary Distance
+            pd_right = request.form.get('pd_right') or None
+            pd_left = request.form.get('pd_left') or None
+            pd_total = request.form.get('pd_total') or None
+            
+            # Referring Doctor
+            referred_by = request.form.get('referred_by') or None
+            
+            # Scheduling
+            next_visit_str = request.form.get('next_visit_date')
+            next_visit_date = datetime.strptime(next_visit_str, '%Y-%m-%d').date() if next_visit_str else None
+            lens_expiry_str = request.form.get('lens_expiry_date')
+            lens_expiry_date = datetime.strptime(lens_expiry_str, '%Y-%m-%d').date() if lens_expiry_str else None
+            
+            # Lens Classification & Type
+            lens_classification = request.form.get('lens_classification') or None
+            lens_type_tags_list = request.form.getlist('lens_type_tags[]')
+            lens_type_tags = ','.join(lens_type_tags_list) if lens_type_tags_list else None
+            
             notes = request.form.get('notes')
             
             image_path = None
@@ -53,9 +86,25 @@ def add(customer_id):
 
             new_prescription = Prescription(
                 customer_id=customer_id,
+                # DV
                 re_sph=re_sph, re_cyl=re_cyl, re_axis=re_axis,
+                re_visual_acuity=re_visual_acuity,
                 le_sph=le_sph, le_cyl=le_cyl, le_axis=le_axis,
+                le_visual_acuity=le_visual_acuity,
+                # NV
+                re_nv_sph=re_nv_sph, re_nv_cyl=re_nv_cyl, re_nv_axis=re_nv_axis,
+                le_nv_sph=le_nv_sph, le_nv_cyl=le_nv_cyl, le_nv_axis=le_nv_axis,
+                # Addition & PD
                 addition=addition,
+                pd_right=pd_right, pd_left=pd_left, pd_total=pd_total,
+                # Doctor & Scheduling
+                referred_by=referred_by,
+                next_visit_date=next_visit_date,
+                lens_expiry_date=lens_expiry_date,
+                # Lens
+                lens_classification=lens_classification,
+                lens_type_tags=lens_type_tags,
+                # Other
                 notes=notes,
                 image_path=image_path,
                 created_by=current_user.id
@@ -94,14 +143,45 @@ def edit(id):
 
     if request.method == 'POST':
         try:
+            # DV fields
             prescription.re_sph = request.form.get('re_sph') or None
             prescription.re_cyl = request.form.get('re_cyl') or None
             prescription.re_axis = request.form.get('re_axis') or None
+            prescription.re_visual_acuity = request.form.get('re_visual_acuity') or None
             prescription.le_sph = request.form.get('le_sph') or None
             prescription.le_cyl = request.form.get('le_cyl') or None
             prescription.le_axis = request.form.get('le_axis') or None
+            prescription.le_visual_acuity = request.form.get('le_visual_acuity') or None
+            
+            # NV fields
+            prescription.re_nv_sph = request.form.get('re_nv_sph') or None
+            prescription.re_nv_cyl = request.form.get('re_nv_cyl') or None
+            prescription.re_nv_axis = request.form.get('re_nv_axis') or None
+            prescription.le_nv_sph = request.form.get('le_nv_sph') or None
+            prescription.le_nv_cyl = request.form.get('le_nv_cyl') or None
+            prescription.le_nv_axis = request.form.get('le_nv_axis') or None
+            
             prescription.addition = request.form.get('addition') or None
+            
+            # PD
+            prescription.pd_right = request.form.get('pd_right') or None
+            prescription.pd_left = request.form.get('pd_left') or None
+            prescription.pd_total = request.form.get('pd_total') or None
+            
+            # Doctor & Scheduling
+            prescription.referred_by = request.form.get('referred_by') or None
+            next_visit_str = request.form.get('next_visit_date')
+            prescription.next_visit_date = datetime.strptime(next_visit_str, '%Y-%m-%d').date() if next_visit_str else None
+            lens_expiry_str = request.form.get('lens_expiry_date')
+            prescription.lens_expiry_date = datetime.strptime(lens_expiry_str, '%Y-%m-%d').date() if lens_expiry_str else None
+            
+            # Lens
+            prescription.lens_classification = request.form.get('lens_classification') or None
+            lens_type_tags_list = request.form.getlist('lens_type_tags[]')
+            prescription.lens_type_tags = ','.join(lens_type_tags_list) if lens_type_tags_list else None
+            
             prescription.notes = request.form.get('notes')
+            
             db.session.commit()
             flash('Prescription updated successfully!', 'success')
             return redirect(url_for('prescription.history', customer_id=customer.id))
