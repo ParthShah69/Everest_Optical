@@ -22,9 +22,16 @@ import logging
 import time
 from datetime import datetime
 
-import ollama as _ollama
+try:
+    import ollama as _ollama
+    _OllamaResponseError = _ollama.ResponseError
+except (ImportError, AttributeError):
+    _ollama = None
+    class _OllamaResponseError(Exception):
+        pass
 
 from flask import current_app
+
 
 from services.ai_glossary import MULTILINGUAL_GLOSSARY_PROMPT
 from services.ai_tools import TOOLS
@@ -84,11 +91,16 @@ class AIAssistant:
             self.max_iters   = 6
 
         # Configure ollama client host
-        self._client = _ollama.Client(host=self.ollama_host)
+        if _ollama:
+            self._client = _ollama.Client(host=self.ollama_host)
+        else:
+            self._client = None
 
     # ------------------------------------------------------------------
     def is_available(self) -> bool:
         """Check if Ollama server + model are reachable."""
+        if not self._client:
+            return False
         try:
             self._client.list()
             return True
@@ -98,24 +110,33 @@ class AIAssistant:
     # ------------------------------------------------------------------
     def chat(self, user_message: str, session_id: str, user_id: int) -> dict:
         """
-        Main entry point.
-
-        Returns a dict:
-        {
-            text, action, navigate_to, language, tool_calls, error
-        }
+        Main chat entry point:
+          1. Detects input language
+          2. Builds message history (recent turns from DB)
+          3. Runs ReAct tool-calling loop
+          4. Persists the exchange to DB
+          5. Returns response dict
         """
         start = time.time()
-
-        # Detect language
         lang = detect_language(user_message)
+        log.info(f"[AI] Chat request from user={user_id} session={session_id[:8]} lang={lang}")
 
-        # Retrieve conversation history for this session
-        history = self._load_history(session_id)
+        # Fetch conversation history for this session (last 10 messages)
+        history_rows = (
+            ChatMessage.query
+            .filter_by(session_id=session_id, user_id=user_id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        history_rows.reverse()
 
-        # Build message list
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend(history)
+        for row in history_rows:
+            if row.role in ("user", "assistant"):
+                messages.append({"role": row.role, "content": row.content})
+
+        # Append current user message
         messages.append({"role": "user", "content": user_message})
 
         # Persist the user message
@@ -123,7 +144,7 @@ class AIAssistant:
 
         try:
             result = self._react_loop(messages)
-        except _ollama.ResponseError as exc:
+        except _OllamaResponseError as exc:
             log.error(f"[AI] Ollama response error: {exc}")
             error_text = self._ollama_error_reply(str(exc), lang)
             self._save_message(session_id, user_id, "assistant", error_text, lang)

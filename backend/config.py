@@ -59,5 +59,6 @@ class Config:
     AI_DEFAULT_LANGUAGE = os.environ.get('AI_DEFAULT_LANGUAGE', 'auto')
 
     # SocketIO async mode
-    SOCKETIO_ASYNC_MODE = os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet')
+    SOCKETIO_ASYNC_MODE = os.environ.get('SOCKETIO_ASYNC_MODE', 'threading')
+
 

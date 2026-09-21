@@ -22,12 +22,19 @@ import uuid
 
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import current_user, login_required
-from flask_socketio import emit, join_room, leave_room
+
+try:
+    from flask_socketio import emit, join_room, leave_room
+except ImportError:
+    def emit(*args, **kwargs): pass
+    def join_room(*args, **kwargs): pass
+    def leave_room(*args, **kwargs): pass
 
 from extensions import socketio, db
 from services.ai_service import get_assistant
 from services.stt_service import STTService
 from models.chat_history import ChatMessage
+
 
 log = logging.getLogger(__name__)
 
