@@ -126,8 +126,9 @@ class STTService:
         if model is None:
             return {
                 'text': '', 'language': language_hint or 'en', 'confidence': 0.0,
-                'error': 'Whisper model not available. Check faster-whisper installation.'
+                'error': 'Whisper STT model not loaded on server. Please use browser speech recognition or type your message.'
             }
+
 
         try:
             segments, info = model.transcribe(

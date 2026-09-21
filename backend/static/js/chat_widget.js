@@ -279,6 +279,8 @@
     }
 
     // Voice recording & STT
+    let speechRecognitionInstance = null;
+
     async function toggleVoiceRecording() {
         if (isRecording) {
             stopVoiceRecording();
@@ -288,6 +290,60 @@
     }
 
     async function startVoiceRecording() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        // Primary: Native Web Speech Recognition (zero latency, works natively in Chrome/Edge/Brave/Safari/Mobile)
+        if (SpeechRecognition) {
+            try {
+                speechRecognitionInstance = new SpeechRecognition();
+                speechRecognitionInstance.continuous = false;
+                speechRecognitionInstance.interimResults = true;
+                // Auto-detect or default to Indian English / Hindi context
+                speechRecognitionInstance.lang = navigator.language || 'en-IN';
+
+                isRecording = true;
+                if (micBtn) micBtn.classList.add('recording');
+
+                let finalTranscript = '';
+
+                speechRecognitionInstance.onresult = (event) => {
+                    let interimTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            finalTranscript += event.results[i][0].transcript;
+                        } else {
+                            interimTranscript += event.results[i][0].transcript;
+                        }
+                    }
+                    if (chatInput) {
+                        chatInput.value = finalTranscript || interimTranscript;
+                    }
+                };
+
+                speechRecognitionInstance.onerror = (e) => {
+                    console.warn('[STT] Web Speech API error:', e.error);
+                    stopVoiceRecording();
+                    if (e.error === 'not-allowed') {
+                        appendMessage('system', 'Microphone permission denied. Please allow microphone access in your browser settings.');
+                    }
+                };
+
+                speechRecognitionInstance.onend = () => {
+                    const text = (chatInput ? chatInput.value : finalTranscript).trim();
+                    stopVoiceRecording();
+                    if (text) {
+                        sendMessage();
+                    }
+                };
+
+                speechRecognitionInstance.start();
+                return;
+            } catch (err) {
+                console.warn('[STT] Could not start Web Speech Recognition, falling back to MediaRecorder:', err);
+            }
+        }
+
+        // Secondary fallback: MediaRecorder audio capture -> server /api/ai/transcribe
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaRecorder = new MediaRecorder(stream);
@@ -308,50 +364,21 @@
             if (micBtn) micBtn.classList.add('recording');
         } catch (err) {
             console.error('Microphone access denied or unsupported:', err);
-            // Fallback: Web Speech Recognition API if available
-            startWebSpeechFallback();
+            appendMessage('system', 'Microphone not accessible. Please ensure microphone permissions are enabled.');
+            stopVoiceRecording();
         }
     }
 
     function stopVoiceRecording() {
+        if (speechRecognitionInstance) {
+            try { speechRecognitionInstance.stop(); } catch (e) {}
+            speechRecognitionInstance = null;
+        }
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
+            try { mediaRecorder.stop(); } catch (e) {}
         }
         isRecording = false;
         if (micBtn) micBtn.classList.remove('recording');
-    }
-
-    function startWebSpeechFallback() {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert('Voice recording requires microphone permissions or a supported browser.');
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'hi-IN'; // Multi-language friendly for Indian context
-        recognition.interimResults = false;
-
-        if (micBtn) micBtn.classList.add('recording');
-
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            if (chatInput) {
-                chatInput.value = transcript;
-                sendMessage();
-            }
-        };
-
-        recognition.onerror = (e) => {
-            console.warn('Web Speech API error:', e);
-            if (micBtn) micBtn.classList.remove('recording');
-        };
-
-        recognition.onend = () => {
-            if (micBtn) micBtn.classList.remove('recording');
-        };
-
-        recognition.start();
     }
 
     async function sendAudioForTranscription(blob) {
@@ -382,6 +409,7 @@
             console.error('STT upload error:', e);
         }
     }
+
 
     // Basic markdown formatter for LLM text responses
     function formatMarkdown(text) {
