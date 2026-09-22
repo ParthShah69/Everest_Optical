@@ -180,6 +180,9 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function () {
+        const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        }[character]));
         // --- Date Logic ---
         const dateInput = document.getElementById('deliveryDate');
         const today = new Date();
@@ -211,12 +214,12 @@
                             items.forEach(item => {
                                 const stockClass = item.is_low_stock ? 'text-danger' : 'text-success';
                                 html += `<div class="px-3 py-2 border-bottom inv-option" style="cursor:pointer;" 
-                                          data-id="${item.id}" data-name="${item.name}" data-price="${item.selling_price}" data-qty="${item.quantity}">
-                                    <strong>${item.name}</strong>
-                                    <small class="text-muted">${item.barcode ? '[' + item.barcode + ']' : ''}</small>
+                                          data-id="${Number(item.id)}" data-name="${escapeHtml(item.name)}" data-price="${Number(item.selling_price)}" data-qty="${Number(item.quantity)}">
+                                    <strong>${escapeHtml(item.name)}</strong>
+                                    <small class="text-muted">${item.barcode ? '[' + escapeHtml(item.barcode) + ']' : ''}</small>
                                     <span class="float-end">
-                                        ₹${item.selling_price} 
-                                        <small class="${stockClass}">(Stock: ${item.quantity})</small>
+                                        ₹${Number(item.selling_price).toFixed(2)}
+                                        <small class="${stockClass}">(Stock: ${Number(item.quantity)})</small>
                                     </span>
                                 </div>`;
                             });

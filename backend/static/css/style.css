@@ -7,8 +7,42 @@ body {
     position: relative;
 }
 
+:root {
+    --erp-sidebar-width: 240px;
+    --erp-page-bg: #f6f8fb;
+    --erp-focus: #0d6efd;
+}
+
+body { background: var(--erp-page-bg); }
+
+.skip-link {
+    position: fixed;
+    top: -60px;
+    left: 16px;
+    z-index: 2000;
+    padding: .65rem 1rem;
+    color: #fff;
+    background: var(--erp-focus);
+    border-radius: .5rem;
+    transition: top .15s ease;
+}
+
+.skip-link:focus { top: 16px; color: #fff; }
+
+:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--erp-focus) 60%, white);
+    outline-offset: 2px;
+}
+
+.global-search { max-width: 440px; position: relative; }
+.page-header-actions { gap: .5rem; }
+.form-control, .form-select, .input-group-text { min-height: 42px; }
+.table-responsive { border-radius: .65rem; }
+
 /* ── SIDEBAR (desktop) ─────────────────────────────────── */
 @media (min-width: 768px) {
+    .global-search { width: auto !important; }
+
     .sidebar {
         position: fixed;
         top: 0;
@@ -17,7 +51,14 @@ body {
         z-index: 100;
         padding: 48px 0 0;
         box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
-        width: 240px;
+        width: var(--erp-sidebar-width);
+    }
+
+    .main-content {
+        width: calc(100% - var(--erp-sidebar-width));
+        min-height: 100vh;
+        margin-left: var(--erp-sidebar-width);
+        padding-top: .5rem;
     }
 }
 
@@ -25,7 +66,12 @@ body {
 @media (max-width: 767.98px) {
     .main-content {
         margin-left: 0 !important;
+        width: 100%;
     }
+
+    .navbar .global-search { max-width: none; }
+    .filter-form { width: 100%; }
+    .filter-form > * { min-width: 0; }
 
     /* Make tables scroll horizontally */
     .table-responsive {
@@ -237,4 +283,16 @@ body {
 
 [data-bs-theme="dark"] .table {
     color: #e9ecef;
+}
+
+[data-bs-theme="dark"] body { background: #161b22; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+    .card:hover { transform: none; }
 }

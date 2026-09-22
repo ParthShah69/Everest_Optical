@@ -13,8 +13,8 @@
 <!-- Search -->
 <div class="row mb-3">
     <div class="col-md-6">
-        <form action="{{ url_for('inventory.index') }}" method="GET" class="d-flex">
-            <input class="form-control me-2" type="search" placeholder="Search Model, Brand..." name="search"
+        <form action="{{ url_for('inventory.index') }}" method="GET" class="d-flex flex-wrap gap-2 filter-form">
+            <input class="form-control flex-grow-1" type="search" placeholder="Search Model, Brand..." aria-label="Search inventory" name="search"
                 value="{{ search }}">
             <button class="btn btn-outline-success" type="submit">Search</button>
         </form>
@@ -43,7 +43,7 @@
                 <td data-label="Image" class="text-center">
                     {% if item.image_path %}
                     <img src="{{ url_for('static', filename=item.image_path.replace('static/', '')) }}" 
-                         class="rounded border p-1" style="width: 42px; height: 42px; object-fit: contain; background: #fff;" alt="Item">
+                         class="rounded border p-1" style="width: 42px; height: 42px; object-fit: contain; background: #fff;" alt="{{ item.model_name }}">
                     {% else %}
                     <div class="rounded border d-inline-flex align-items-center justify-content-center bg-light" style="width: 42px; height: 42px;">
                         <i class="fas fa-glasses text-secondary"></i>

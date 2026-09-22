@@ -33,6 +33,16 @@ th, td { padding: 8px; border: 1px solid var(--line); vertical-align: top; }
 .receipt + .top-actions { width: 90mm; }
 .receipt .document-header { display: block; }
 .receipt .info-grid { gap: 12px; }
+@media screen and (max-width: 768px) {
+  .print-page, .top-actions { width: calc(100% - 24px); }
+  .print-page { min-height: 0; margin: 12px; padding: 20px; }
+  .top-actions { margin: 12px; }
+  .document-header, .info-grid, .signature-grid { grid-template-columns: 1fr; display: grid; }
+  .document-header { gap: 12px; }
+  .right { text-align: left; }
+  .totals { width: 100%; }
+  th, td { padding: 6px; }
+}
 @media print {
   body { background: #fff; }
   .print-page { width: auto; min-height: auto; margin: 0; padding: 0; }

@@ -44,16 +44,16 @@
         <div class="card shadow-sm">
             <div class="card-body p-0">
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
+                    <table class="table table-hover align-middle mb-0 mobile-cards">
                         <thead class="table-light"><tr><th>Name</th><th>Rate</th><th>Status</th><th>Default</th><th class="text-end">Action</th></tr></thead>
                         <tbody>
                         {% for config in configs %}
                             <tr>
-                                <td>{{ config.name }}</td>
-                                <td>{{ config.rate }}%</td>
-                                <td><span class="badge bg-{{ 'success' if config.is_active else 'secondary' }}">{{ 'Active' if config.is_active else 'Disabled' }}</span></td>
-                                <td>{% if config.is_default %}<i class="fas fa-check text-primary" title="Default"></i>{% else %}—{% endif %}</td>
-                                <td class="text-end">
+                                <td data-label="Name">{{ config.name }}</td>
+                                <td data-label="Rate">{{ config.rate }}%</td>
+                                <td data-label="Status"><span class="badge bg-{{ 'success' if config.is_active else 'secondary' }}">{{ 'Active' if config.is_active else 'Disabled' }}</span></td>
+                                <td data-label="Default">{% if config.is_default %}<i class="fas fa-check text-primary" title="Default"></i>{% else %}—{% endif %}</td>
+                                <td data-label="Action" class="text-end">
                                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('tax_config.edit', id=config.id) }}">Edit</a>
                                     <form method="post" action="{{ url_for('tax_config.toggle', id=config.id) }}" class="d-inline">
                                         <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Disable' if config.is_active else 'Enable' }}</button>

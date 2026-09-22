@@ -13,12 +13,12 @@
 <!-- Search Bar -->
 <div class="row mb-3">
     <div class="col-md-6">
-        <form action="{{ url_for('customer.index') }}" method="GET" class="d-flex">
-            <input class="form-control me-2" type="search" placeholder="Search by Name or Phone" aria-label="Search"
+        <form action="{{ url_for('customer.index') }}" method="GET" class="d-flex flex-wrap gap-2 filter-form">
+            <input class="form-control flex-grow-1" type="search" placeholder="Search by Name or Phone" aria-label="Search customers"
                 name="search" value="{{ search_query }}">
             <button class="btn btn-outline-success" type="submit">Search</button>
             {% if search_query %}
-            <a href="{{ url_for('customer.index') }}" class="btn btn-outline-secondary ms-2">Clear</a>
+            <a href="{{ url_for('customer.index') }}" class="btn btn-outline-secondary">Clear</a>
             {% endif %}
         </form>
     </div>

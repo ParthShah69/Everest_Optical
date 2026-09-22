@@ -22,3 +22,10 @@
 ## Validation
 
 - [x] Run application import, template rendering, database migration, and browser smoke checks after implementation.
+
+## Stabilization and responsive usability
+
+- [x] Reconcile delivered-order inventory when orders are created, edited, cancelled, or deleted.
+- [x] Keep GST calculation consistent between the billing form preview and server-side totals.
+- [x] Improve responsive navigation, global search, lists, accessibility, and printable mobile previews.
+- [x] Harden chatbot/STT fallbacks and align AI-created orders with sequential billing, GST, and delivery stock rules.
