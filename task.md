@@ -29,3 +29,5 @@
 - [x] Keep GST calculation consistent between the billing form preview and server-side totals.
 - [x] Improve responsive navigation, global search, lists, accessibility, and printable mobile previews.
 - [x] Harden chatbot/STT fallbacks and align AI-created orders with sequential billing, GST, and delivery stock rules.
+- [x] Add a Vercel-compatible Groq adapter, truthful AI health status, and browser-only free STT configuration path.
+- [ ] Add the user-owned free Groq key to Vercel and verify a live provider response after deployment.

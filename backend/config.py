@@ -40,9 +40,22 @@ class Config:
     GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
 
     # ── AI Assistant Configuration ─────────────────────────────────────────────
+    # LLM provider. ``ollama`` is retained for local development; ``groq`` is
+    # an OpenAI-compatible hosted option suitable for serverless deployments.
+    AI_PROVIDER = os.environ.get('AI_PROVIDER', 'ollama').strip().lower()
+
     # Ollama local LLM settings
     AI_OLLAMA_HOST = os.environ.get('AI_OLLAMA_HOST', 'http://localhost:11434')
     AI_LLM_MODEL = os.environ.get('AI_LLM_MODEL', 'qwen3:4b')
+
+    # Groq hosted LLM settings. Keep keys server-side only (Vercel environment
+    # variables), never expose them to templates or browser JavaScript.
+    GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+    AI_GROQ_BASE_URL = os.environ.get('AI_GROQ_BASE_URL', 'https://api.groq.com/openai/v1')
+
+    # Socket.IO needs a stateful host. Vercel deployments should use the REST
+    # fallback and set this to true.
+    AI_DISABLE_SOCKETIO = os.environ.get('AI_DISABLE_SOCKETIO', '').strip().lower() in {'1', 'true', 'yes'}
 
     # Speech-to-Text: 'whisper_local' | 'sarvam_api' | 'browser'
     AI_STT_BACKEND = os.environ.get('AI_STT_BACKEND', 'whisper_local')

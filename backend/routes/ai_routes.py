@@ -74,13 +74,14 @@ def health():
         "llm": {
             "available": assistant.is_available(),
             "model": assistant.model,
-            "host": assistant.ollama_host,
+            "provider": assistant.provider,
         },
         "stt": {
             "available": stt.is_available(),
             "backend": stt.backend,
             "model_size": stt.model_size,
         },
+        "realtime": {"enabled": not current_app.config.get('AI_DISABLE_SOCKETIO', False)},
     })
 
 
@@ -109,17 +110,17 @@ def chat():
 
     if not assistant.is_available():
         model = current_app.config.get('AI_LLM_MODEL', 'qwen3:8b')
+        provider = current_app.config.get('AI_PROVIDER', 'ollama')
         return jsonify({
             "text": (
                 f"⚠️ The AI assistant is offline. "
-                f"Please make sure Ollama is running and the model '{model}' is downloaded.\n"
-                f"Run: `ollama pull {model}` in your terminal."
+                f"The configured {provider} model '{model}' is unavailable."
             ),
             "action": None,
             "navigate_to": None,
             "language": "en",
             "tool_calls": [],
-            "error": "ollama_unavailable",
+            "error": "provider_unavailable",
         }), 200  # 200 so the chat widget renders the message
 
     try:
@@ -212,6 +213,7 @@ def get_config():
     """Return current AI config (sanitized — no API keys)."""
     cfg = current_app.config
     return jsonify({
+        "provider":       cfg.get('AI_PROVIDER', 'ollama'),
         "llm_model":      cfg.get('AI_LLM_MODEL', 'qwen3:8b'),
         "ollama_host":    cfg.get('AI_OLLAMA_HOST', 'http://localhost:11434'),
         "stt_backend":    cfg.get('AI_STT_BACKEND', 'whisper_local'),
@@ -232,17 +234,20 @@ def update_config():
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
     allowed = {
-        'AI_LLM_MODEL', 'AI_STT_BACKEND', 'AI_STT_MODEL_SIZE',
+        'AI_PROVIDER', 'AI_LLM_MODEL', 'AI_STT_BACKEND', 'AI_STT_MODEL_SIZE',
         'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS', 'AI_SARVAM_API_KEY'
     }
     updated = {}
     valid_backends = {'whisper_local', 'sarvam_api', 'browser'}
+    valid_providers = {'ollama', 'groq'}
     valid_model_sizes = {'tiny', 'base', 'small', 'medium', 'large-v3'}
     valid_languages = {'auto', 'en', 'hi', 'gu'}
     for key, val in data.items():
         env_key = key.upper()
         if env_key not in allowed:
             continue
+        if env_key == 'AI_PROVIDER' and val not in valid_providers:
+            return jsonify({"error": "Invalid AI provider."}), 400
         if env_key == 'AI_STT_BACKEND' and val not in valid_backends:
             return jsonify({"error": "Invalid STT backend."}), 400
         if env_key == 'AI_STT_MODEL_SIZE' and val not in valid_model_sizes:
@@ -325,11 +330,11 @@ def on_chat_message(data):
     if not assistant.is_available():
         model = current_app.config.get('AI_LLM_MODEL', 'qwen3:8b')
         emit('chat_response', {
-            "text": f"⚠️ AI offline. Run `ollama pull {model}` then restart Ollama.",
+            "text": f"⚠️ AI offline. The configured model '{model}' is unavailable.",
             "action": None,
             "navigate_to": None,
             "tool_calls": [],
-            "error": "ollama_unavailable",
+            "error": "provider_unavailable",
         }, room=room)
         return
 

@@ -88,6 +88,28 @@ class AiChatSttSmokeTests(unittest.TestCase):
             assistant._client = SimpleNamespace(list=lambda: SimpleNamespace(models=[SimpleNamespace(model='qwen3:4b')]))
             self.assertTrue(assistant.is_available())
 
+    def test_groq_adapter_checks_health_and_builds_openai_tools(self):
+        with self.app.app_context(), patch('services.ai_service.requests.get') as get_request, \
+                patch('services.ai_service.requests.post') as post_request:
+            assistant = AIAssistant()
+            assistant.provider = 'groq'
+            assistant.model = 'demo-model'
+            assistant.groq_api_key = 'test-key'
+            assistant.groq_base_url = 'https://api.groq.test/openai/v1'
+
+            get_request.return_value = SimpleNamespace(ok=True)
+            self.assertTrue(assistant.is_available())
+            self.assertIn('/models/demo-model', get_request.call_args.args[0])
+
+            post_request.return_value = SimpleNamespace(
+                ok=True,
+                json=lambda: {'choices': [{'message': {'role': 'assistant', 'content': 'Hello'}}]},
+            )
+            message = assistant._complete([{'role': 'user', 'content': 'Hello'}])
+            self.assertEqual(message['content'], 'Hello')
+            payload = post_request.call_args.kwargs['json']
+            self.assertTrue(any(tool['function']['name'] == 'create_order' for tool in payload['tools']))
+
 
 if __name__ == '__main__':
     unittest.main()

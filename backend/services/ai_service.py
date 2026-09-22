@@ -1,8 +1,8 @@
 """
 ai_service.py
 =============
-Core AI assistant — wraps Ollama with a ReAct (Reason → Act → Observe) loop
-and manages per-session conversation history stored in the DB.
+Core AI assistant — supports local Ollama and Groq's hosted, OpenAI-compatible
+API, with a ReAct (Reason → Act → Observe) loop and per-session history.
 
 Public interface:
     assistant = AIAssistant()
@@ -18,8 +18,14 @@ Public interface:
 """
 
 import json
+import inspect
 import logging
 import time
+from decimal import Decimal
+from types import UnionType
+from typing import Union, get_args, get_origin
+
+import requests
 
 try:
     import ollama as _ollama
@@ -39,6 +45,63 @@ from extensions import db
 from models.chat_history import ChatMessage
 
 log = logging.getLogger(__name__)
+
+
+class AIProviderError(Exception):
+    """A safe, provider-neutral error for the chat route and UI."""
+
+
+def _json_type(annotation):
+    """Translate the simple Python tool annotations into JSON-schema types."""
+    if annotation in (inspect.Parameter.empty, str, None):
+        return {"type": "string"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation in (float, Decimal):
+        return {"type": "number"}
+    if annotation is list:
+        return {"type": "array", "items": {"type": "object"}}
+    if annotation is dict:
+        return {"type": "object"}
+    origin = get_origin(annotation)
+    if origin is list:
+        args = get_args(annotation)
+        return {"type": "array", "items": _json_type(args[0] if args else str)}
+    if origin is dict:
+        return {"type": "object"}
+    if origin in (Union, UnionType):
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        return _json_type(args[0] if args else str)
+    return {"type": "string"}
+
+
+def _openai_tools():
+    """Build the OpenAI-compatible tool schema without another dependency."""
+    result = []
+    for function in TOOLS:
+        signature = inspect.signature(function)
+        properties = {
+            name: _json_type(parameter.annotation)
+            for name, parameter in signature.parameters.items()
+        }
+        required = [
+            name for name, parameter in signature.parameters.items()
+            if parameter.default is inspect.Parameter.empty
+        ]
+        parameters = {"type": "object", "properties": properties}
+        if required:
+            parameters["required"] = required
+        result.append({
+            "type": "function",
+            "function": {
+                "name": function.__name__,
+                "description": inspect.getdoc(function) or function.__name__,
+                "parameters": parameters,
+            },
+        })
+    return result
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -81,23 +144,46 @@ class AIAssistant:
     def __init__(self):
         try:
             cfg = current_app.config
+            self.provider      = cfg.get('AI_PROVIDER', 'ollama').lower()
             self.model         = cfg.get('AI_LLM_MODEL', 'qwen3:8b')
             self.ollama_host   = cfg.get('AI_OLLAMA_HOST', 'http://localhost:11434')
+            self.groq_base_url = cfg.get('AI_GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
+            self.groq_api_key  = cfg.get('GROQ_API_KEY', '')
             self.max_iters     = int(cfg.get('AI_MAX_TOOL_ITERATIONS', 6))
         except RuntimeError:
+            self.provider    = 'ollama'
             self.model       = 'qwen3:8b'
             self.ollama_host = 'http://localhost:11434'
+            self.groq_base_url = 'https://api.groq.com/openai/v1'
+            self.groq_api_key = ''
             self.max_iters   = 6
 
-        # Configure ollama client host
-        if _ollama:
+        if self.provider not in {'ollama', 'groq'}:
+            log.warning("[AI] Unknown provider '%s'; falling back to ollama", self.provider)
+            self.provider = 'ollama'
+
+        # Configure the local client only when local Ollama is selected.
+        if self.provider == 'ollama' and _ollama:
             self._client = _ollama.Client(host=self.ollama_host)
         else:
             self._client = None
 
     # ------------------------------------------------------------------
     def is_available(self) -> bool:
-        """Check that Ollama is reachable and the configured model is installed."""
+        """Check that the selected provider is reachable and has the model."""
+        if self.provider == 'groq':
+            if not self.groq_api_key:
+                return False
+            try:
+                response = requests.get(
+                    f'{self.groq_base_url}/models/{self.model}',
+                    headers={'Authorization': f'Bearer {self.groq_api_key}'},
+                    timeout=(3, 5),
+                )
+                return response.ok
+            except requests.RequestException:
+                return False
+
         if not self._client:
             return False
         try:
@@ -155,9 +241,9 @@ class AIAssistant:
 
         try:
             result = self._react_loop(messages)
-        except _OllamaResponseError as exc:
-            log.error(f"[AI] Ollama response error: {exc}")
-            error_text = self._ollama_error_reply(str(exc), lang)
+        except (_OllamaResponseError, AIProviderError) as exc:
+            log.error(f"[AI] Provider response error: {exc}")
+            error_text = self._provider_error_reply(str(exc), lang)
             self._save_message(session_id, user_id, "assistant", error_text, lang)
             return {"text": error_text, "action": None, "navigate_to": None,
                     "language": lang, "tool_calls": [], "error": str(exc)}
@@ -190,17 +276,13 @@ class AIAssistant:
         tool_calls_made = []
 
         for iteration in range(self.max_iters):
-            response = self._client.chat(
-                model=self.model,
-                messages=messages,
-                tools=TOOLS,
-                options={"temperature": 0.2, "num_predict": 1024},
-            )
-            msg = response.message
+            msg = self._complete(messages)
+            tool_calls = self._tool_calls(msg)
 
             # If no tool calls — we have the final text answer
-            if not getattr(msg, 'tool_calls', None):
-                text         = (msg.content or "").strip()
+            if not tool_calls:
+                content = msg.get('content') if self.provider == 'groq' else msg.content
+                text         = (content or "").strip()
                 action       = None
                 navigate_to  = None
 
@@ -220,11 +302,12 @@ class AIAssistant:
                 }
 
             # Execute each tool call
-            messages.append(msg)  # add assistant message with tool_calls
+            # Ollama accepts its Message object; Groq needs the response dict
+            # including tool-call ids before the tool results can be appended.
+            messages.append(msg)
 
-            for tc in msg.tool_calls:
-                fn_name = tc.function.name
-                fn_args = tc.function.arguments or {}
+            for tc in tool_calls:
+                fn_name, fn_args, tool_call_id = self._tool_call_parts(tc)
 
                 log.info(f"[AI][iter={iteration}] Tool call: {fn_name}({fn_args})")
 
@@ -241,11 +324,12 @@ class AIAssistant:
                     "result": tool_result_obj,
                 })
 
-                messages.append({
-                    "role": "tool",
-                    "content": tool_result_str,
-                    "name": fn_name,
-                })
+                tool_message = {"role": "tool", "content": tool_result_str}
+                if self.provider == 'groq':
+                    tool_message['tool_call_id'] = tool_call_id
+                else:
+                    tool_message['name'] = fn_name
+                messages.append(tool_message)
 
         # Safety: too many iterations
         log.warning(f"[AI] Reached max iterations ({self.max_iters})")
@@ -276,6 +360,63 @@ class AIAssistant:
         except Exception as exc:
             log.exception(f"[AI][Tool:{name}] Execution error")
             return json.dumps({"success": False, "error": str(exc)})
+
+    def _complete(self, messages):
+        """Return the provider's assistant message in its native format."""
+        if self.provider == 'ollama':
+            response = self._client.chat(
+                model=self.model,
+                messages=messages,
+                tools=TOOLS,
+                options={"temperature": 0.2, "num_predict": 1024},
+            )
+            return response.message
+
+        try:
+            response = requests.post(
+                f'{self.groq_base_url}/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {self.groq_api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': self.model,
+                    'messages': messages,
+                    'tools': _openai_tools(),
+                    'tool_choice': 'auto',
+                    'temperature': 0.2,
+                    'max_tokens': 1024,
+                },
+                timeout=(5, 45),
+            )
+        except requests.RequestException as exc:
+            raise AIProviderError('The hosted AI service could not be reached.') from exc
+
+        if not response.ok:
+            if response.status_code == 401:
+                raise AIProviderError('The hosted AI key is invalid or missing.')
+            if response.status_code == 429:
+                raise AIProviderError('The hosted AI free-tier limit has been reached. Please try later.')
+            raise AIProviderError('The hosted AI service is temporarily unavailable.')
+
+        try:
+            message = response.json()['choices'][0]['message']
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise AIProviderError('The hosted AI returned an invalid response.') from exc
+        return message
+
+    def _tool_calls(self, message):
+        return message.get('tool_calls', []) if self.provider == 'groq' else getattr(message, 'tool_calls', [])
+
+    def _tool_call_parts(self, tool_call):
+        if self.provider == 'groq':
+            function = tool_call.get('function', {})
+            try:
+                arguments = json.loads(function.get('arguments') or '{}')
+            except (TypeError, ValueError):
+                arguments = {}
+            return function.get('name'), arguments, tool_call.get('id')
+        return tool_call.function.name, tool_call.function.arguments or {}, None
 
     # ------------------------------------------------------------------
     def _load_history(self, session_id: str, limit: int = 20) -> list:
@@ -343,19 +484,17 @@ class AIAssistant:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _ollama_error_reply(error: str, lang: str) -> str:
-        """Return a friendly error based on detected language."""
-        if "connection refused" in error.lower() or "connect" in error.lower():
+    def _provider_error_reply(error: str, lang: str) -> str:
+        """Return a friendly provider-neutral error based on detected language."""
+        if "connection refused" in error.lower() or "could not be reached" in error.lower():
             msgs = {
                 "hi": "माफ़ करें, AI सर्वर (Ollama) चालू नहीं है। कृपया Ollama शुरू करें।",
                 "gu": "માફ કરો, AI સર્વર (Ollama) ચાલુ નથી. Ollama ચાલુ કરો.",
                 "romanized_hi": "Maaf karo, AI server (Ollama) chal nahi raha. Please Ollama start karo.",
                 "romanized_gu": "Maaf karjo, AI server (Ollama) chalu nathi. Ollama start karo.",
             }
-            return msgs.get(lang, "⚠️ The AI server (Ollama) is not running. Please start Ollama and try again.")
-        if "model" in error.lower() and "not found" in error.lower():
-            return "⚠️ The AI model is not downloaded yet. Run: `ollama pull qwen3:8b` in your terminal."
-        return f"⚠️ AI error: {error}"
+            return msgs.get(lang, "⚠️ The AI service is offline. Please try again shortly.")
+        return "⚠️ The AI service is unavailable. Please try again shortly."
 
     @staticmethod
     def _generic_error_reply(lang: str) -> str:

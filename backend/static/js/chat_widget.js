@@ -25,11 +25,10 @@
     let recognitionStoppedByUser = false;
 
     // DOM Elements
-    let launcher, chatWindow, closeBtn, minimizeBtn, messagesContainer, chatInput, sendBtn, micBtn, suggestionsContainer, statusDot, statusText;
+    let launcher, chatWindow, closeBtn, minimizeBtn, messagesContainer, chatInput, sendBtn, micBtn, suggestionsContainer, statusDot, statusText, statusBadge;
 
     document.addEventListener('DOMContentLoaded', () => {
         initElements();
-        initSocket();
         checkHealth();
         bindEvents();
         loadHistory();
@@ -47,6 +46,7 @@
         suggestionsContainer = document.getElementById('ai-suggestions');
         statusDot = document.getElementById('ai-status-dot');
         statusText = document.getElementById('ai-status-text');
+        statusBadge = launcher ? launcher.querySelector('.ai-badge') : null;
     }
 
     function initSocket() {
@@ -91,17 +91,24 @@
     async function checkHealth() {
         try {
             const res = await fetch('/api/ai/health');
-            if (res.ok) {
-                const data = await res.json();
+            if (!res.ok) throw new Error(`Health check failed (${res.status})`);
+            const data = await res.json();
                 if (data.llm && data.llm.available) {
                     if (statusDot) statusDot.classList.remove('offline');
+                    if (statusBadge) statusBadge.classList.remove('offline');
                     if (statusText) statusText.textContent = `Online (${data.llm.model})`;
                 } else {
                     if (statusDot) statusDot.classList.add('offline');
-                    if (statusText) statusText.textContent = 'LLM Offline';
-                }
+                    if (statusBadge) statusBadge.classList.add('offline');
+                    if (statusText) statusText.textContent = 'AI Offline';
             }
+            // Serverless platforms use REST for chat. Only connect Socket.IO
+            // after health confirms that the deployment explicitly supports it.
+            if (data.realtime && data.realtime.enabled) initSocket();
         } catch (e) {
+            if (statusDot) statusDot.classList.add('offline');
+            if (statusBadge) statusBadge.classList.add('offline');
+            if (statusText) statusText.textContent = 'AI Offline';
             console.debug('AI Health check failed:', e);
         }
     }
@@ -234,7 +241,7 @@
     function handleAssistantResponse(data) {
         if (!data) return;
 
-        if (data.error && data.error !== 'ollama_unavailable') {
+        if (data.error && data.error !== 'provider_unavailable') {
             appendMessage('system', data.text || data.error);
             return;
         }
