@@ -31,3 +31,9 @@
 - [x] Harden chatbot/STT fallbacks and align AI-created orders with sequential billing, GST, and delivery stock rules.
 - [x] Add a Vercel-compatible Groq adapter, truthful AI health status, and browser-only free STT configuration path.
 - [ ] Add the user-owned free Groq key to Vercel and verify a live provider response after deployment.
+
+## UI and counter-side productivity
+
+- [x] Refresh the responsive visual system, dark mode, focus treatment, navigation hierarchy, forms, and chat widget.
+- [x] Add keyboard-first global search (`/` or Ctrl/Cmd+K) and dashboard quick-action/attention guidance.
+- [x] Add authenticated, filter-aware, spreadsheet-safe CSV exports for customers, orders, and inventory.

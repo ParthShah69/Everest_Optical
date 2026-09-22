@@ -134,7 +134,7 @@
                     <div class="input-group input-group-sm">
                         <span class="input-group-text bg-white"><i class="fas fa-search text-muted"></i></span>
                         <input type="text" class="form-control" id="globalSearchInput" 
-                               placeholder="Search customer by name or phone..." autocomplete="off">
+                               placeholder="Search customers or orders…" autocomplete="off" aria-keyshortcuts="/ Control+K">
                     </div>
                     <div id="globalSearchResults" class="position-absolute w-100 bg-white border rounded shadow-lg mt-1" 
                          style="display:none; z-index:1050; max-height:300px; overflow-y:auto;">
@@ -213,6 +213,15 @@
             }[character]));
 
             if (searchInput && searchResults) {
+                document.addEventListener('keydown', function(event) {
+                    const target = event.target;
+                    const typing = target && (target.matches('input, textarea, select') || target.isContentEditable);
+                    if ((event.key === '/' && !typing) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+                        event.preventDefault();
+                        searchInput.focus();
+                    }
+                });
+
                 searchInput.addEventListener('input', function() {
                     clearTimeout(searchTimeout);
                     const q = this.value.trim();

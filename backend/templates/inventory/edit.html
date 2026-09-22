@@ -2,89 +2,102 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-lg-8">
         <div class="card shadow">
             <div class="card-header bg-warning text-dark">
                 <h4 class="mb-0">Edit Inventory Item</h4>
             </div>
             <div class="card-body">
                 <form method="POST" enctype="multipart/form-data">
-                    <div class="row mb-3">
+                    <p class="text-muted small mb-4">Update the item carefully—stock and price changes affect future billing.</p>
+                    <fieldset class="mb-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-glasses me-1" aria-hidden="true"></i> Item details</legend>
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Model Name <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" name="model_name" value="{{ item.model_name }}"
+                            <label class="form-label" for="model_name">Model Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="model_name" name="model_name" value="{{ item.model_name }}"
                                 required>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Brand</label>
-                            <input type="text" class="form-control" name="brand" value="{{ item.brand }}">
+                            <label class="form-label" for="brand">Brand</label>
+                            <input type="text" class="form-control" id="brand" name="brand" value="{{ item.brand }}">
                         </div>
                     </div>
 
-                    <div class="row mb-3">
+                    <div class="row g-3 mt-0">
                         <div class="col-md-6">
-                            <label class="form-label">Frame Type</label>
-                            <input type="text" class="form-control" name="frame_type" value="{{ item.frame_type }}">
+                            <label class="form-label" for="frame_type">Frame Type</label>
+                            <input type="text" class="form-control" id="frame_type" name="frame_type" value="{{ item.frame_type }}">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Location <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" name="location" value="{{ item.location }}"
+                            <label class="form-label" for="location">Location <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="location" name="location" value="{{ item.location }}"
                                 required>
                         </div>
                     </div>
+                    </fieldset>
 
-                    <div class="row mb-3">
+                    <fieldset class="mb-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-boxes me-1" aria-hidden="true"></i> Stock control</legend>
+                    <div class="row g-3">
                         <div class="col-md-4">
-                            <label class="form-label">Quantity</label>
-                            <input type="number" class="form-control" name="quantity" value="{{ item.quantity }}"
+                            <label class="form-label" for="quantity">Current Quantity</label>
+                            <input type="number" class="form-control" id="quantity" name="quantity" value="{{ item.quantity }}"
                                 min="0">
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label">Low Stock Threshold</label>
-                            <input type="number" class="form-control" name="low_stock_threshold"
+                            <label class="form-label" for="low_stock_threshold">Low Stock Alert At</label>
+                            <input type="number" class="form-control" id="low_stock_threshold" name="low_stock_threshold"
                                 value="{{ item.low_stock_threshold }}" min="1">
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label">Shop Branch</label>
-                            <input type="text" class="form-control" name="shop_branch" value="{{ item.shop_branch }}">
+                            <label class="form-label" for="shop_branch">Shop Branch</label>
+                            <input type="text" class="form-control" id="shop_branch" name="shop_branch" value="{{ item.shop_branch }}">
                         </div>
                     </div>
+                    </fieldset>
 
-                    <div class="row mb-3">
+                    <fieldset class="mb-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-rupee-sign me-1" aria-hidden="true"></i> Pricing</legend>
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Cost Price</label>
-                            <input type="number" class="form-control" name="cost_price" value="{{ item.cost_price }}"
+                            <label class="form-label" for="cost_price">Cost Price</label>
+                            <input type="number" class="form-control" id="cost_price" name="cost_price" value="{{ item.cost_price }}"
                                 step="0.01" required>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Selling Price</label>
-                            <input type="number" class="form-control" name="selling_price"
+                            <label class="form-label" for="selling_price">Selling Price</label>
+                            <input type="number" class="form-control" id="selling_price" name="selling_price"
                                 value="{{ item.selling_price }}" step="0.01" required>
                         </div>
                     </div>
+                    </fieldset>
 
+                    <fieldset class="mb-3">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-image me-1" aria-hidden="true"></i> Photo & variants</legend>
                     <div class="mb-3">
-                        <label class="form-label"><i class="fas fa-image me-1"></i>Item Photo / Image</label>
+                        <label class="form-label" for="image">Item Photo</label>
                         {% if item.image_path %}
                         <div class="mb-2">
                             <img src="{{ url_for('static', filename=item.image_path.replace('static/', '')) }}" class="rounded border p-1" style="height: 90px; object-fit: contain;" alt="Item Photo">
                         </div>
                         {% endif %}
-                        <input type="file" class="form-control" name="image" accept="image/*">
+                        <input type="file" class="form-control" id="image" name="image" accept="image/png,image/jpeg,image/webp">
                         <div class="form-text">Upload new product photo to update.</div>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Color Stock</label>
-                        <input type="text" class="form-control" name="color_stock" value="{{ item.color_stock or '' }}"
+                        <label class="form-label" for="color_stock">Color Stock</label>
+                        <input type="text" class="form-control" id="color_stock" name="color_stock" value="{{ item.color_stock or '' }}"
                             placeholder="e.g. black-10, white-15, grey-5">
                         <div class="form-text">Enter color name and quantity separated by dash, comma-separated.</div>
                     </div>
+                    </fieldset>
 
-                    <div class="d-flex justify-content-between align-items-center mt-4">
+                    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-stretch align-items-sm-center gap-2 mt-4 pt-2 border-top">
                         <a href="{{ url_for('inventory.index') }}" class="btn btn-secondary">Cancel</a>
-                        <div>
-                            <button type="button" class="btn btn-outline-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteInventoryModal">
+                        <div class="d-flex flex-column flex-sm-row gap-2">
+                            <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteInventoryModal">
                                 <i class="fas fa-trash-alt me-1"></i> {% if current_user.is_admin %}Delete Item{% else %}Request Deletion{% endif %}
                             </button>
                             <button type="submit" class="btn btn-warning">Update Item</button>

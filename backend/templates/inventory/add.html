@@ -2,77 +2,91 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-lg-8">
         <div class="card shadow">
             <div class="card-header bg-primary text-white">
                 <h4 class="mb-0">Add Inventory Item</h4>
             </div>
             <div class="card-body">
                 <form method="POST" enctype="multipart/form-data">
-                    <div class="row mb-3">
+                    <p class="text-muted small mb-4">Add the item identity and location first. Prices and stock then make it immediately available for billing.</p>
+                    <fieldset class="mb-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-glasses me-1" aria-hidden="true"></i> Item details</legend>
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Model Name <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" name="model_name" required>
+                            <label class="form-label" for="model_name">Model Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="model_name" name="model_name" required autofocus autocomplete="off">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Brand</label>
-                            <input type="text" class="form-control" name="brand">
+                            <label class="form-label" for="brand">Brand</label>
+                            <input type="text" class="form-control" id="brand" name="brand" autocomplete="organization">
                         </div>
                     </div>
 
-                    <div class="row mb-3">
+                    <div class="row g-3 mt-0">
                         <div class="col-md-6">
-                            <label class="form-label">Frame Type</label>
-                            <input type="text" class="form-control" name="frame_type"
+                            <label class="form-label" for="frame_type">Frame Type</label>
+                            <input type="text" class="form-control" id="frame_type" name="frame_type"
                                 placeholder="Full Rim / Half Rim / Rimless">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Location <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" name="location" required
+                            <label class="form-label" for="location">Location <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="location" name="location" required
                                 placeholder="Rack A, Shelf 2">
                         </div>
                     </div>
+                    </fieldset>
 
-                    <div class="row mb-3">
+                    <fieldset class="mb-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-boxes me-1" aria-hidden="true"></i> Stock control</legend>
+                    <div class="row g-3">
                         <div class="col-md-4">
-                            <label class="form-label">Quantity</label>
-                            <input type="number" class="form-control" name="quantity" value="0" min="0">
+                            <label class="form-label" for="quantity">Opening Quantity</label>
+                            <input type="number" class="form-control" id="quantity" name="quantity" value="0" min="0" inputmode="numeric">
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label">Low Stock Threshold</label>
-                            <input type="number" class="form-control" name="low_stock_threshold" value="5" min="1">
+                            <label class="form-label" for="low_stock_threshold">Low Stock Alert At</label>
+                            <input type="number" class="form-control" id="low_stock_threshold" name="low_stock_threshold" value="5" min="1" inputmode="numeric" aria-describedby="thresholdHelp">
+                            <div id="thresholdHelp" class="form-text">You will see an alert at this quantity.</div>
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label">Shop Branch</label>
-                            <input type="text" class="form-control" name="shop_branch" value="Main">
+                            <label class="form-label" for="shop_branch">Shop Branch</label>
+                            <input type="text" class="form-control" id="shop_branch" name="shop_branch" value="Main">
                         </div>
                     </div>
+                    </fieldset>
 
-                    <div class="row mb-3">
+                    <fieldset class="mb-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-rupee-sign me-1" aria-hidden="true"></i> Pricing</legend>
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Cost Price</label>
-                            <input type="number" class="form-control" name="cost_price" step="0.01" required>
+                            <label class="form-label" for="cost_price">Cost Price <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="cost_price" name="cost_price" step="0.01" min="0" inputmode="decimal" required>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Selling Price</label>
-                            <input type="number" class="form-control" name="selling_price" step="0.01" required>
+                            <label class="form-label" for="selling_price">Selling Price <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="selling_price" name="selling_price" step="0.01" min="0" inputmode="decimal" required>
                         </div>
                     </div>
+                    </fieldset>
 
+                    <fieldset class="mb-3">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-image me-1" aria-hidden="true"></i> Photo & variants</legend>
                     <div class="mb-3">
-                        <label class="form-label"><i class="fas fa-image me-1"></i>Item Photo / Image</label>
-                        <input type="file" class="form-control" name="image" accept="image/*">
+                        <label class="form-label" for="image">Item Photo</label>
+                        <input type="file" class="form-control" id="image" name="image" accept="image/png,image/jpeg,image/webp">
                         <div class="form-text">Upload product photo (PNG, JPG, WEBP).</div>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Color Stock</label>
-                        <input type="text" class="form-control" name="color_stock"
+                        <label class="form-label" for="color_stock">Color Stock</label>
+                        <input type="text" class="form-control" id="color_stock" name="color_stock"
                             placeholder="e.g. black-10, white-15, grey-5">
                         <div class="form-text">Enter color name and quantity separated by dash, comma-separated.</div>
                     </div>
+                    </fieldset>
 
-                    <div class="d-flex justify-content-between mt-4">
+                    <div class="d-flex flex-column-reverse flex-sm-row justify-content-between gap-2 mt-4 pt-2 border-top">
                         <a href="{{ url_for('inventory.index') }}" class="btn btn-secondary">Cancel</a>
                         <button type="submit" class="btn btn-primary">Save Item</button>
                     </div>

@@ -2,63 +2,73 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-lg-8">
         <div class="card shadow">
             <div class="card-header bg-primary text-white">
                 <h4 class="mb-0">Add New Customer</h4>
             </div>
             <div class="card-body">
-                <form method="POST">
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
+                <form method="POST" class="needs-validation" novalidate>
+                    <p class="text-muted small mb-4">Fields marked <span class="text-danger">*</span> are required. Add contact details first so billing and follow-ups are ready.</p>
+                    <fieldset class="mb-2">
+                        <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-user me-1" aria-hidden="true"></i> Customer details</legend>
+                    <div class="row g-3">
+                        <div class="col-md-6">
                             <label for="name" class="form-label">Customer Name <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="name" name="name" required>
+                            <input type="text" class="form-control" id="name" name="name" autocomplete="name" required autofocus>
                         </div>
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-6">
                             <label for="care_of" class="form-label">Care Of (Father/Husband Name)</label>
-                            <input type="text" class="form-control" id="care_of" name="care_of">
+                            <input type="text" class="form-control" id="care_of" name="care_of" autocomplete="off">
                         </div>
                     </div>
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
+                    <div class="row g-3 mt-0">
+                        <div class="col-md-6">
                             <label for="phone" class="form-label">Phone Number <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="phone" name="phone" required>
+                            <input type="tel" class="form-control" id="phone" name="phone" inputmode="tel" autocomplete="tel" required aria-describedby="phoneHelp">
+                            <div id="phoneHelp" class="form-text">Used for billing and WhatsApp updates.</div>
                         </div>
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-6">
                             <label for="email" class="form-label">Email</label>
-                            <input type="email" class="form-control" id="email" name="email">
+                            <input type="email" class="form-control" id="email" name="email" autocomplete="email">
                         </div>
                     </div>
+                    </fieldset>
 
-                    <h6 class="border-bottom pb-2 mt-3 mb-3"><i class="fas fa-map-marker-alt me-1"></i> Address</h6>
+                    <fieldset class="mt-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-map-marker-alt me-1" aria-hidden="true"></i> Address</legend>
                     <div class="mb-3">
                         <label for="address" class="form-label">Street Address</label>
                         <textarea class="form-control" id="address" name="address" rows="2"></textarea>
                     </div>
-                    <div class="row">
-                        <div class="col-md-4 mb-3">
+                    <div class="row g-3">
+                        <div class="col-md-4">
                             <label for="city" class="form-label">City</label>
-                            <input type="text" class="form-control" id="city" name="city">
+                            <input type="text" class="form-control" id="city" name="city" autocomplete="address-level2">
                         </div>
-                        <div class="col-md-4 mb-3">
+                        <div class="col-md-4">
                             <label for="state" class="form-label">State</label>
-                            <input type="text" class="form-control" id="state" name="state">
+                            <input type="text" class="form-control" id="state" name="state" autocomplete="address-level1">
                         </div>
-                        <div class="col-md-4 mb-3">
+                        <div class="col-md-4">
                             <label for="pincode" class="form-label">Pincode</label>
-                            <input type="text" class="form-control" id="pincode" name="pincode">
+                            <input type="text" class="form-control" id="pincode" name="pincode" inputmode="numeric" autocomplete="postal-code">
                         </div>
                     </div>
+                    </fieldset>
 
-                    <h6 class="border-bottom pb-2 mt-3 mb-3"><i class="fas fa-credit-card me-1"></i> Financial</h6>
-                    <div class="row">
-                        <div class="col-md-4 mb-3">
+                    <fieldset class="mt-4">
+                    <legend class="h6 border-bottom pb-2 mb-3"><i class="fas fa-credit-card me-1" aria-hidden="true"></i> Financial</legend>
+                    <div class="row g-3">
+                        <div class="col-sm-6 col-md-4">
                             <label for="credit_limit" class="form-label">Credit Limit (₹)</label>
-                            <input type="number" class="form-control" id="credit_limit" name="credit_limit" value="0" min="0" step="0.01">
+                            <input type="number" class="form-control" id="credit_limit" name="credit_limit" value="0" min="0" step="0.01" inputmode="decimal" aria-describedby="creditLimitHelp">
+                            <div id="creditLimitHelp" class="form-text">Set 0 when no credit is allowed.</div>
                         </div>
                     </div>
+                    </fieldset>
 
-                    <div class="d-flex justify-content-between mt-3">
+                    <div class="d-flex flex-column-reverse flex-sm-row justify-content-between gap-2 mt-4 pt-2 border-top">
                         <a href="{{ url_for('customer.index') }}" class="btn btn-secondary">Cancel</a>
                         <button type="submit" class="btn btn-success">Save Customer</button>
                     </div>

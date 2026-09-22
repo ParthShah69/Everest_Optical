@@ -2,13 +2,13 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-10">
+    <div class="col-xl-10">
         <div class="card shadow">
             <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
-                <h4 class="mb-0">Add Prescription for {{ customer.name }}</h4>
+                <h1 class="h4 mb-0">Add Prescription for {{ customer.name }}</h1>
                 <!-- OCR Upload Trigger -->
                 <button class="btn btn-light btn-sm text-dark" type="button" data-bs-toggle="collapse"
-                    data-bs-target="#ocrCollapse">
+                    data-bs-target="#ocrCollapse" aria-controls="ocrCollapse" aria-expanded="false">
                     <i class="fas fa-camera"></i> Scan Image
                 </button>
             </div>
@@ -17,89 +17,92 @@
                 <!-- OCR Upload Section -->
                 <div class="collapse mb-4" id="ocrCollapse">
                     <div class="card card-body bg-light">
-                        <label class="form-label">Upload Prescription Image (Auto-fill)</label>
+                        <label class="form-label" for="ocrFile">Upload Prescription Image (Auto-fill)</label>
                         <div class="input-group">
                             <input type="file" class="form-control" id="ocrFile" accept="image/*">
                             <button class="btn btn-primary" type="button" id="btnScan" onclick="uploadOCR()">
                                 <i class="fas fa-magic"></i> Scan
                             </button>
                         </div>
-                        <div id="ocrStatus" class="mt-2 text-muted small"></div>
+                        <div id="ocrStatus" class="mt-2 text-muted small" aria-live="polite"></div>
                     </div>
                 </div>
 
-                <form method="POST" enctype="multipart/form-data">
+                <form method="POST" enctype="multipart/form-data" id="prescriptionForm">
                     <div class="alert alert-info py-2">
                         <small><i class="fas fa-info-circle"></i> Upload image below to save it with this
                             prescription.</small>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Attach Prescription Image (Optional)</label>
-                        <input type="file" class="form-control" name="prescription_image" accept="image/*">
+                        <label class="form-label" for="prescription_image">Attach Prescription Image (Optional)</label>
+                        <input type="file" class="form-control" id="prescription_image" name="prescription_image" accept="image/png,image/jpeg,image/webp">
                     </div>
 
                     <!-- Referring Doctor -->
                     <div class="row mb-3">
                         <div class="col-md-6">
-                            <label class="form-label"><i class="fas fa-user-md me-1"></i> Referred By (Doctor)</label>
+                            <label class="form-label" for="referred_by"><i class="fas fa-user-md me-1" aria-hidden="true"></i> Referred By (Doctor)</label>
                             <input type="text" class="form-control" name="referred_by" id="referred_by" placeholder="e.g. Dr. Sharma">
                         </div>
                     </div>
 
                     <!-- ── DISTANT VISION (DV) ── -->
-                    <h5 class="border-bottom pb-2 mt-3"><i class="fas fa-eye me-1"></i> Distant Vision (DV)</h5>
+                    <h2 class="h5 border-bottom pb-2 mt-4"><i class="fas fa-eye me-1" aria-hidden="true"></i> Distant Vision (DV)</h2>
+                    <p class="small text-muted mb-2">Enter the latest measured values. Leave a field blank if it was not prescribed.</p>
                     <div class="table-responsive mb-3">
-                        <table class="table table-bordered text-center">
+                        <table class="table table-bordered table-sm text-center align-middle" aria-label="Distant vision prescription">
+                            <caption class="visually-hidden">Distant vision prescription values for right and left eyes</caption>
                             <thead class="table-light">
                                 <tr>
-                                    <th>Eye</th>
-                                    <th>SPH</th>
-                                    <th>CYL</th>
-                                    <th>AXIS</th>
-                                    <th>V/A</th>
+                                    <th scope="col">Eye</th>
+                                    <th scope="col">SPH</th>
+                                    <th scope="col">CYL</th>
+                                    <th scope="col">AXIS</th>
+                                    <th scope="col">V/A</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td class="fw-bold text-primary">Right (OD)</td>
-                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_sph" id="re_sph" placeholder="-1.25"></td>
-                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_cyl" id="re_cyl" placeholder="-0.50"></td>
-                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_axis" id="re_axis" placeholder="0-180"></td>
-                                    <td><input type="text" class="form-control form-control-sm" name="re_visual_acuity" placeholder="6/6"></td>
+                                    <th scope="row" class="fw-bold text-primary">Right (OD)</th>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_sph" id="re_sph" placeholder="-1.25" aria-label="Right eye distant vision sphere"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_cyl" id="re_cyl" placeholder="-0.50" aria-label="Right eye distant vision cylinder"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_axis" id="re_axis" placeholder="0-180" aria-label="Right eye distant vision axis"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="re_visual_acuity" placeholder="6/6" aria-label="Right eye visual acuity"></td>
                                 </tr>
                                 <tr>
-                                    <td class="fw-bold text-success">Left (OS)</td>
-                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_sph" id="le_sph" placeholder="-1.25"></td>
-                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_cyl" id="le_cyl" placeholder="-0.50"></td>
-                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_axis" id="le_axis" placeholder="0-180"></td>
-                                    <td><input type="text" class="form-control form-control-sm" name="le_visual_acuity" placeholder="6/6"></td>
+                                    <th scope="row" class="fw-bold text-success">Left (OS)</th>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_sph" id="le_sph" placeholder="-1.25" aria-label="Left eye distant vision sphere"></td>
+                                    <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_cyl" id="le_cyl" placeholder="-0.50" aria-label="Left eye distant vision cylinder"></td>
+                                    <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_axis" id="le_axis" placeholder="0-180" aria-label="Left eye distant vision axis"></td>
+                                    <td><input type="text" class="form-control form-control-sm" name="le_visual_acuity" placeholder="6/6" aria-label="Left eye visual acuity"></td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
 
                     <!-- ── NEAR VISION (NV) ── -->
-                    <h5 class="border-bottom pb-2 mt-3"><i class="fas fa-book-reader me-1"></i> Near Vision (NV)</h5>
+                    <h2 class="h5 border-bottom pb-2 mt-4"><i class="fas fa-book-reader me-1" aria-hidden="true"></i> Near Vision (NV)</h2>
                     <div class="table-responsive mb-3">
-                        <table class="table table-bordered text-center">
+                        <table class="table table-bordered table-sm text-center align-middle" aria-label="Near vision prescription">
+                            <caption class="visually-hidden">Near vision prescription values for right and left eyes</caption>
                             <thead class="table-light">
                                 <tr>
-                                    <th>Eye</th>
-                                    <th>SPH</th>
-                                    <th>CYL</th>
-                                    <th>AXIS</th>
+                                    <th scope="col">Eye</th>
+                                    <th scope="col">SPH</th>
+                                    <th scope="col">CYL</th>
+                                    <th scope="col">AXIS</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td class="fw-bold text-primary">Right (OD)</td>
+                                    <th scope="row" class="fw-bold text-primary">Right (OD)</th>
                                     <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_nv_sph" id="re_nv_sph" placeholder="-1.25"></td>
                                     <td><input type="number" step="0.25" class="form-control form-control-sm" name="re_nv_cyl" id="re_nv_cyl" placeholder="-0.50"></td>
                                     <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="re_nv_axis" id="re_nv_axis" placeholder="0-180"></td>
                                 </tr>
                                 <tr>
-                                    <td class="fw-bold text-success">Left (OS)</td>
+                                    <th scope="row" class="fw-bold text-success">Left (OS)</th>
                                     <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_nv_sph" id="le_nv_sph" placeholder="-1.25"></td>
                                     <td><input type="number" step="0.25" class="form-control form-control-sm" name="le_nv_cyl" id="le_nv_cyl" placeholder="-0.50"></td>
                                     <td><input type="number" step="1" min="0" max="180" class="form-control form-control-sm" name="le_nv_axis" id="le_nv_axis" placeholder="0-180"></td>
@@ -129,10 +132,10 @@
                     </div>
 
                     <!-- Lens Classification & Tags -->
-                    <h5 class="border-bottom pb-2 mt-4"><i class="fas fa-glasses me-1"></i> Lens Details</h5>
+                    <h2 class="h5 border-bottom pb-2 mt-4"><i class="fas fa-glasses me-1" aria-hidden="true"></i> Lens Details</h2>
                     <div class="row mb-3">
                         <div class="col-md-4">
-                            <label class="form-label">Lens Classification</label>
+                            <span class="form-label d-block">Lens Classification</span>
                             <div>
                                 <div class="form-check form-check-inline">
                                     <input class="form-check-input" type="radio" name="lens_classification" value="Ready Stock" id="lensReady">
@@ -145,7 +148,7 @@
                             </div>
                         </div>
                         <div class="col-md-8">
-                            <label class="form-label">Lens Type Tags</label>
+                            <span class="form-label d-block">Lens Type Tags</span>
                             <div class="d-flex flex-wrap gap-2">
                                 {% for tag in ['Single Vision', 'Bifocal', 'Progressive', 'AR Coat', 'Blue Cut', 'Photochromic', 'Tinted', 'UV Protection', 'Contact Lens'] %}
                                 <div class="form-check">
@@ -158,7 +161,7 @@
                     </div>
 
                     <!-- Scheduling -->
-                    <h5 class="border-bottom pb-2 mt-4"><i class="fas fa-calendar-alt me-1"></i> Scheduling</h5>
+                    <h2 class="h5 border-bottom pb-2 mt-4"><i class="fas fa-calendar-alt me-1" aria-hidden="true"></i> Scheduling</h2>
                     <div class="row mb-3">
                         <div class="col-md-4">
                             <label class="form-label">Next Visit Date</label>
@@ -175,7 +178,7 @@
                         <textarea class="form-control" name="notes" rows="3"></textarea>
                     </div>
 
-                    <div class="d-flex justify-content-between mt-4">
+                    <div class="d-flex flex-column-reverse flex-sm-row justify-content-between gap-2 mt-4 pt-2 border-top">
                         <a href="{{ url_for('customer.index') }}" class="btn btn-secondary">Cancel</a>
                         <button type="submit" class="btn btn-success">Save Prescription</button>
                     </div>
