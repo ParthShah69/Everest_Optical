@@ -238,7 +238,7 @@ def update_config():
         'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS', 'AI_SARVAM_API_KEY'
     }
     updated = {}
-    valid_backends = {'whisper_local', 'sarvam_api', 'browser'}
+    valid_backends = {'whisper_local', 'sarvam_api', 'groq_api', 'browser'}
     valid_providers = {'ollama', 'groq'}
     valid_model_sizes = {'tiny', 'base', 'small', 'medium', 'large-v3'}
     valid_languages = {'auto', 'en', 'hi', 'gu'}

@@ -27,6 +27,7 @@ class TestConfig(Config):
     SECRET_KEY = 'test-secret'
     SQLALCHEMY_DATABASE_URI = 'sqlite://'
     SQLALCHEMY_ENGINE_OPTIONS = {}
+    AI_PROVIDER = 'ollama'
     AI_STT_BACKEND = 'browser'
 
 
@@ -109,6 +110,20 @@ class AiChatSttSmokeTests(unittest.TestCase):
             self.assertEqual(message['content'], 'Hello')
             payload = post_request.call_args.kwargs['json']
             self.assertTrue(any(tool['function']['name'] == 'create_order' for tool in payload['tools']))
+
+    def test_groq_stt_uses_server_side_key(self):
+        with self.app.app_context(), patch('services.stt_service.requests.post') as post_request:
+            post_request.return_value = SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {'text': 'hello from voice'},
+            )
+            stt = STTService(backend='groq_api')
+            stt.groq_key = 'test-key'
+            result = stt.transcribe(b'a' * 700, 'hi-IN', filename='recording.webm')
+            self.assertEqual(result['text'], 'hello from voice')
+            self.assertEqual(result['language'], 'hi')
+            self.assertEqual(post_request.call_args.kwargs['data']['model'], 'whisper-large-v3-turbo')
 
 
 if __name__ == '__main__':

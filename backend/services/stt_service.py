@@ -1,10 +1,8 @@
 """
 stt_service.py
 ==============
-Speech-to-Text service that supports:
-  1. Local faster-whisper (primary, free, offline)
-  2. Sarvam AI REST API (fallback, optimised for Indian languages)
-  3. Graceful degradation when neither is available
+Speech-to-Text service that supports local Whisper, Groq Whisper, Sarvam, and
+browser recognition. Groq uses the same server-side key as the chat provider.
 
 Usage:
     stt = STTService()
@@ -26,7 +24,7 @@ _whisper_model = None
 _whisper_model_size = None
 _whisper_failed_sizes = set()
 
-_VALID_BACKENDS = {'whisper_local', 'sarvam_api', 'browser'}
+_VALID_BACKENDS = {'whisper_local', 'sarvam_api', 'groq_api', 'browser'}
 _VALID_MODEL_SIZES = {'tiny', 'base', 'small', 'medium', 'large-v3'}
 _LANGUAGES = {'en', 'hi', 'gu'}
 
@@ -63,7 +61,7 @@ class STTService:
 
     def __init__(self, backend: str = None, model_size: str = None):
         """
-        backend   – override config; one of 'whisper_local', 'sarvam_api', 'browser'
+        backend   – override config; one of 'whisper_local', 'sarvam_api', 'groq_api', 'browser'
         model_size – Whisper model size override
         """
         try:
@@ -71,11 +69,15 @@ class STTService:
             self.backend    = backend    or cfg.get('AI_STT_BACKEND',    'whisper_local')
             self.model_size = model_size or cfg.get('AI_STT_MODEL_SIZE', 'small')
             self.sarvam_key = cfg.get('AI_SARVAM_API_KEY', '')
+            self.groq_key = cfg.get('GROQ_API_KEY', '')
+            self.groq_model = cfg.get('AI_GROQ_STT_MODEL', 'whisper-large-v3-turbo')
         except RuntimeError:
             # Outside application context (e.g. module-level import)
             self.backend    = backend    or 'whisper_local'
             self.model_size = model_size or 'small'
             self.sarvam_key = ''
+            self.groq_key = ''
+            self.groq_model = 'whisper-large-v3-turbo'
 
         self.backend = str(self.backend).lower()
         self.model_size = str(self.model_size).lower()
@@ -129,6 +131,8 @@ class STTService:
                     result = self._transcribe_sarvam(audio_path, language_hint)
             elif self.backend == 'sarvam_api':
                 result = self._transcribe_sarvam(audio_path, language_hint)
+            elif self.backend == 'groq_api':
+                result = self._transcribe_groq(audio_path, language_hint)
             else:
                 # 'browser' mode – should never reach server
                 result = {'text': '', 'language': language_hint or 'en', 'confidence': 0.0,
@@ -212,12 +216,49 @@ class STTService:
             return self._error('Voice transcription is temporarily unavailable. Please type your message.', language_hint, exc)
 
     # ------------------------------------------------------------------
+    def _transcribe_groq(self, audio_path: str, language_hint: str) -> dict:
+        """Use Groq's OpenAI-compatible Whisper endpoint without exposing the key."""
+        if not self.groq_key:
+            return self._error('Voice transcription is not configured yet.', language_hint)
+
+        data = {'model': self.groq_model}
+        if language_hint:
+            data['language'] = language_hint
+
+        try:
+            with open(audio_path, 'rb') as audio_file:
+                response = requests.post(
+                    'https://api.groq.com/openai/v1/audio/transcriptions',
+                    headers={'Authorization': f'Bearer {self.groq_key}'},
+                    files={'file': (Path(audio_path).name, audio_file, 'application/octet-stream')},
+                    data=data,
+                    timeout=(5, 45),
+                )
+            if response.status_code == 401:
+                return self._error('Voice transcription key is invalid or missing.', language_hint)
+            if response.status_code == 429:
+                return self._error('The free voice-transcription limit has been reached. Please type your message.', language_hint)
+            response.raise_for_status()
+            transcript = response.json().get('text', '').strip()
+            return {
+                'text': transcript,
+                'language': language_hint or 'en',
+                'confidence': 1.0,
+                'error': None if transcript else 'No speech detected in the recording.',
+            }
+        except (OSError, requests.RequestException, ValueError) as exc:
+            log.error('[STT][Groq] API error: %s', exc)
+            return self._error('Voice transcription is temporarily unavailable. Please type your message.', language_hint, exc)
+
+    # ------------------------------------------------------------------
     def is_available(self) -> bool:
         """Cheap health check that never downloads/loads a Whisper model."""
         if self.backend == 'whisper_local':
             return _whisper_model is not None and _whisper_model_size == self.model_size
         elif self.backend == 'sarvam_api':
             return bool(self.sarvam_key)
+        elif self.backend == 'groq_api':
+            return bool(self.groq_key)
         return True  # browser mode always "available"
 
     @staticmethod

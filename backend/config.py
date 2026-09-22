@@ -57,10 +57,11 @@ class Config:
     # fallback and set this to true.
     AI_DISABLE_SOCKETIO = os.environ.get('AI_DISABLE_SOCKETIO', '').strip().lower() in {'1', 'true', 'yes'}
 
-    # Speech-to-Text: 'whisper_local' | 'sarvam_api' | 'browser'
+    # Speech-to-Text: 'whisper_local' | 'sarvam_api' | 'groq_api' | 'browser'
     AI_STT_BACKEND = os.environ.get('AI_STT_BACKEND', 'whisper_local')
     # Whisper model size: tiny | base | small | medium | large-v3
     AI_STT_MODEL_SIZE = os.environ.get('AI_STT_MODEL_SIZE', 'small')
+    AI_GROQ_STT_MODEL = os.environ.get('AI_GROQ_STT_MODEL', 'whisper-large-v3-turbo')
 
     # Optional Sarvam AI API key for Indian-language STT fallback
     AI_SARVAM_API_KEY = os.environ.get('AI_SARVAM_API_KEY', '')
