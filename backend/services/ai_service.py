@@ -20,7 +20,6 @@ Public interface:
 import json
 import logging
 import time
-from datetime import datetime
 
 try:
     import ollama as _ollama
@@ -98,12 +97,26 @@ class AIAssistant:
 
     # ------------------------------------------------------------------
     def is_available(self) -> bool:
-        """Check if Ollama server + model are reachable."""
+        """Check that Ollama is reachable and the configured model is installed."""
         if not self._client:
             return False
         try:
-            self._client.list()
-            return True
+            models_response = self._client.list()
+            models = getattr(models_response, 'models', None)
+            if models is None and isinstance(models_response, dict):
+                models = models_response.get('models')
+            if models is None:
+                return True
+            names = {
+                (getattr(model, 'model', None) or getattr(model, 'name', None)
+                 or (model.get('model') if isinstance(model, dict) else None)
+                 or (model.get('name') if isinstance(model, dict) else None))
+                for model in (models or [])
+            }
+            # Older Ollama clients may not return a model list.  A successful
+            # reachability check is still useful there; chat will give the
+            # existing friendly model-not-found response if necessary.
+            return self.model in names
         except Exception:
             return False
 
@@ -117,18 +130,16 @@ class AIAssistant:
           4. Persists the exchange to DB
           5. Returns response dict
         """
+        user_message = (user_message or '').strip()
+        if not user_message:
+            return {"text": "Please enter a message.", "action": None, "navigate_to": None,
+                    "language": "en", "tool_calls": [], "error": "empty_message"}
         start = time.time()
         lang = detect_language(user_message)
         log.info(f"[AI] Chat request from user={user_id} session={session_id[:8]} lang={lang}")
 
         # Fetch conversation history for this session (last 10 messages)
-        history_rows = (
-            ChatMessage.query
-            .filter_by(session_id=session_id, user_id=user_id)
-            .order_by(ChatMessage.created_at.desc())
-            .limit(10)
-            .all()
-        )
+        history_rows = self._history_rows(session_id, user_id)
         history_rows.reverse()
 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -188,7 +199,7 @@ class AIAssistant:
             msg = response.message
 
             # If no tool calls — we have the final text answer
-            if not msg.tool_calls:
+            if not getattr(msg, 'tool_calls', None):
                 text         = (msg.content or "").strip()
                 action       = None
                 navigate_to  = None
@@ -282,6 +293,24 @@ class AIAssistant:
             return [{"role": r.role, "content": r.content} for r in reversed(rows)]
         except Exception as exc:
             log.warning(f"[AI] Could not load chat history: {exc}")
+            return []
+
+    @staticmethod
+    def _history_rows(session_id: str, user_id: int):
+        """Read history without allowing a transient DB error to crash chat."""
+        try:
+            rows = (
+                ChatMessage.query
+                .filter_by(session_id=session_id, user_id=user_id)
+                .filter(ChatMessage.role.in_(["user", "assistant"]))
+                .order_by(ChatMessage.created_at.desc())
+                .limit(10)
+                .all()
+            )
+            return rows
+        except Exception as exc:
+            log.warning("[AI] Could not read chat history: %s", exc)
+            db.session.rollback()
             return []
 
     # ------------------------------------------------------------------

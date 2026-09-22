@@ -19,6 +19,10 @@
     let mediaRecorder = null;
     let audioChunks = [];
     let isThinking = false;
+    let activeAudioStream = null;
+    let speechRecognitionInstance = null;
+    let recognitionHadResult = false;
+    let recognitionStoppedByUser = false;
 
     // DOM Elements
     let launcher, chatWindow, closeBtn, minimizeBtn, messagesContainer, chatInput, sendBtn, micBtn, suggestionsContainer, statusDot, statusText;
@@ -112,12 +116,14 @@
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 chatWindow.classList.add('hidden');
+                if (launcher) launcher.setAttribute('aria-expanded', 'false');
             });
         }
 
         if (minimizeBtn) {
             minimizeBtn.addEventListener('click', () => {
                 chatWindow.classList.add('hidden');
+                if (launcher) launcher.setAttribute('aria-expanded', 'false');
             });
         }
 
@@ -159,9 +165,11 @@
         const isHidden = chatWindow.classList.contains('hidden');
         if (isHidden) {
             chatWindow.classList.remove('hidden');
+            if (launcher) launcher.setAttribute('aria-expanded', 'true');
             if (chatInput) chatInput.focus();
         } else {
             chatWindow.classList.add('hidden');
+            if (launcher) launcher.setAttribute('aria-expanded', 'false');
         }
     }
 
@@ -182,7 +190,7 @@
         }
     }
 
-    function sendMessage() {
+    async function sendMessage() {
         const text = (chatInput.value || '').trim();
         if (!text || isThinking) return;
 
@@ -197,21 +205,29 @@
             });
         } else {
             // REST Fallback
-            fetch('/api/ai/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, session_id: sessionId })
-            })
-                .then(r => r.json())
-                .then(data => {
-                    removeTypingIndicator();
-                    handleAssistantResponse(data);
-                })
-                .catch(err => {
-                    removeTypingIndicator();
-                    appendMessage('system', 'Error sending message. Please try again.');
-                    console.error(err);
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), 45000);
+            try {
+                const response = await fetch('/api/ai/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ message: text, session_id: sessionId }),
+                    signal: controller.signal,
                 });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(data.error || `Request failed (${response.status})`);
+                }
+                handleAssistantResponse(data);
+            } catch (err) {
+                appendMessage('system', err.name === 'AbortError'
+                    ? 'The assistant took too long to respond. Please try again.'
+                    : (err.message || 'Error sending message. Please try again.'));
+                console.error(err);
+            } finally {
+                window.clearTimeout(timeout);
+                removeTypingIndicator();
+            }
         }
     }
 
@@ -223,14 +239,7 @@
             return;
         }
 
-        let messageText = data.text || '';
-        let toolPills = '';
-
-        if (data.tool_calls && data.tool_calls.length > 0) {
-            toolPills = data.tool_calls.map(tc => `<div class="ai-tool-pill"><i class="fas fa-bolt"></i> Executed: ${tc.name || 'tool'}</div>`).join('');
-        }
-
-        appendMessage('assistant', toolPills + formatMarkdown(messageText));
+        appendMessage('assistant', data.text || '', { toolCalls: data.tool_calls || [] });
 
         // Automatic page navigation if requested
         if (data.navigate_to) {
@@ -240,15 +249,26 @@
         }
     }
 
-    function appendMessage(role, content) {
+    function appendMessage(role, content, options = {}) {
         if (!messagesContainer) return;
         const msgDiv = document.createElement('div');
         msgDiv.className = `ai-msg ${role}`;
 
-        if (role === 'assistant' || role === 'system') {
-            msgDiv.innerHTML = content;
-        } else {
+        if (role === 'user') {
             msgDiv.textContent = content;
+        } else {
+            // Persisted messages and model responses are always escaped before
+            // adding the small, intentionally supported markdown subset.
+            msgDiv.innerHTML = formatMarkdown(String(content || ''));
+            (options.toolCalls || []).forEach((toolCall) => {
+                const pill = document.createElement('div');
+                pill.className = 'ai-tool-pill';
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-bolt';
+                pill.appendChild(icon);
+                pill.append(` Executed: ${toolCall && toolCall.name ? toolCall.name : 'tool'}`);
+                msgDiv.appendChild(pill);
+            });
         }
 
         messagesContainer.appendChild(msgDiv);
@@ -278,8 +298,8 @@
         }
     }
 
-    // Voice recording & STT
-    let speechRecognitionInstance = null;
+    // Voice recording & STT. Native browser recognition is intentionally tried
+    // first: it avoids loading a Whisper model on low-resource deployments.
 
     async function toggleVoiceRecording() {
         if (isRecording) {
@@ -292,16 +312,17 @@
     async function startVoiceRecording() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-        // Primary: Native Web Speech Recognition (zero latency, works natively in Chrome/Edge/Brave/Safari/Mobile)
+        // Primary: native Web Speech Recognition (zero latency when supported).
         if (SpeechRecognition) {
             try {
                 speechRecognitionInstance = new SpeechRecognition();
                 speechRecognitionInstance.continuous = false;
                 speechRecognitionInstance.interimResults = true;
-                // Auto-detect or default to Indian English / Hindi context
                 speechRecognitionInstance.lang = navigator.language || 'en-IN';
 
                 isRecording = true;
+                recognitionHadResult = false;
+                recognitionStoppedByUser = false;
                 if (micBtn) micBtn.classList.add('recording');
 
                 let finalTranscript = '';
@@ -310,7 +331,8 @@
                     let interimTranscript = '';
                     for (let i = event.resultIndex; i < event.results.length; ++i) {
                         if (event.results[i].isFinal) {
-                            finalTranscript += event.results[i][0].transcript;
+                            finalTranscript += event.results[i][0].transcript + ' ';
+                            recognitionHadResult = true;
                         } else {
                             interimTranscript += event.results[i][0].transcript;
                         }
@@ -322,16 +344,24 @@
 
                 speechRecognitionInstance.onerror = (e) => {
                     console.warn('[STT] Web Speech API error:', e.error);
-                    stopVoiceRecording();
+                    recognitionStoppedByUser = true;
+                    isRecording = false;
+                    if (micBtn) micBtn.classList.remove('recording');
                     if (e.error === 'not-allowed') {
                         appendMessage('system', 'Microphone permission denied. Please allow microphone access in your browser settings.');
+                    } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+                        appendMessage('system', 'Browser speech recognition is unavailable. You can try the microphone again to use server transcription, or type your message.');
                     }
                 };
 
                 speechRecognitionInstance.onend = () => {
-                    const text = (chatInput ? chatInput.value : finalTranscript).trim();
-                    stopVoiceRecording();
-                    if (text) {
+                    const text = finalTranscript.trim();
+                    const shouldSubmit = !recognitionStoppedByUser && recognitionHadResult && text;
+                    speechRecognitionInstance = null;
+                    isRecording = false;
+                    if (micBtn) micBtn.classList.remove('recording');
+                    if (shouldSubmit) {
+                        if (chatInput) chatInput.value = text;
                         sendMessage();
                     }
                 };
@@ -346,6 +376,11 @@
         // Secondary fallback: MediaRecorder audio capture -> server /api/ai/transcribe
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (!window.MediaRecorder) {
+                stream.getTracks().forEach(track => track.stop());
+                throw new Error('MediaRecorder is not supported by this browser.');
+            }
+            activeAudioStream = stream;
             mediaRecorder = new MediaRecorder(stream);
             audioChunks = [];
 
@@ -355,7 +390,9 @@
 
             mediaRecorder.onstop = async () => {
                 const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                stream.getTracks().forEach(track => track.stop());
+                if (activeAudioStream) activeAudioStream.getTracks().forEach(track => track.stop());
+                activeAudioStream = null;
+                mediaRecorder = null;
                 await sendAudioForTranscription(audioBlob);
             };
 
@@ -371,8 +408,8 @@
 
     function stopVoiceRecording() {
         if (speechRecognitionInstance) {
+            recognitionStoppedByUser = true;
             try { speechRecognitionInstance.stop(); } catch (e) {}
-            speechRecognitionInstance = null;
         }
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             try { mediaRecorder.stop(); } catch (e) {}
@@ -385,16 +422,18 @@
         showTypingIndicator();
         const formData = new FormData();
         formData.append('audio', blob, 'recording.webm');
+        let timeout;
 
         try {
+            const controller = new AbortController();
+            timeout = window.setTimeout(() => controller.abort(), 45000);
             const res = await fetch('/api/ai/transcribe', {
                 method: 'POST',
-                body: formData
+                body: formData,
+                signal: controller.signal,
             });
-
-            removeTypingIndicator();
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
-                const data = await res.json();
                 if (data.text && data.text.trim()) {
                     if (chatInput) {
                         chatInput.value = data.text;
@@ -403,10 +442,17 @@
                 } else if (data.error) {
                     appendMessage('system', 'Voice input: ' + data.error);
                 }
+            } else {
+                appendMessage('system', data.error || 'Voice transcription failed. Please try again or type your message.');
             }
         } catch (e) {
-            removeTypingIndicator();
             console.error('STT upload error:', e);
+            appendMessage('system', e.name === 'AbortError'
+                ? 'Voice transcription took too long. Please try a shorter recording.'
+                : 'Voice transcription failed. Please try again or type your message.');
+        } finally {
+            removeTypingIndicator();
+            if (timeout) window.clearTimeout(timeout);
         }
     }
 

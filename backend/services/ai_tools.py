@@ -31,10 +31,11 @@ from flask_login import current_user
 
 from extensions import db
 from models.customer import Customer
-from models.order import Order, OrderItem
+from models.order import Order, OrderItem, STATUS_CHOICES
 from models.prescription import Prescription
 from models.inventory import Inventory
 from models.user import User
+from models.sequence import get_next_number
 
 log = logging.getLogger(__name__)
 
@@ -329,6 +330,8 @@ def create_order(
     discount: float = 0.0,
     status: str = "Pending",
     delivery_mode: str = "Self",
+    tax_mode: str = "not_apply",
+    tax_percent: float = 0.0,
 ) -> str:
     """
     Create a new order (bill) for a customer.
@@ -336,20 +339,24 @@ def create_order(
     Args:
         customer_id: Customer ID (required — search/create customer first)
         items: List of order line items. Each item must have:
-               'description' (str), 'quantity' (int), 'unit_price' (float)
+               'description' (str), 'quantity' (int), 'unit_price' (float),
+               and optional 'inventory_id' for stock-linked products.
         prescription_id: Existing prescription ID to link (optional)
         delivery_date: Expected delivery in YYYY-MM-DD, 'today', or 'tomorrow' (optional)
         advance_amount: Advance payment received (default 0.0)
         discount: Discount amount off the subtotal (default 0.0)
-        status: 'Pending' | 'Ready' | 'Delivered' (default 'Pending')
+        status: one of the configured ERP order lifecycle statuses (default 'Pending')
         delivery_mode: 'Self' | 'Courier' | 'Home' (default 'Self')
+        tax_mode: 'not_apply' | 'not_calculated' | 'calculated' (default 'not_apply')
+        tax_percent: GST percentage when tax_mode is 'calculated' (0-100)
 
     Returns:
         JSON with order_no, total, advance, balance, and a link to view the order
     """
     _require_app_context()
-    VALID_STATUSES = {"Pending", "Ready", "Delivered"}
+    VALID_STATUSES = set(STATUS_CHOICES)
     VALID_MODES    = {"Self", "Courier", "Home"}
+    VALID_TAX_MODES = {'not_apply', 'not_calculated', 'calculated'}
 
     try:
         customer = db.session.get(Customer, int(customer_id))
@@ -363,6 +370,13 @@ def create_order(
             return _err(f"Invalid status '{status}'. Choose from: {', '.join(VALID_STATUSES)}.")
         if delivery_mode not in VALID_MODES:
             return _err(f"Invalid delivery_mode '{delivery_mode}'. Choose from: {', '.join(VALID_MODES)}.")
+        if tax_mode not in VALID_TAX_MODES:
+            return _err(f"Invalid tax_mode '{tax_mode}'. Choose from: {', '.join(sorted(VALID_TAX_MODES))}.")
+        tax_percent_dec = _money(tax_percent)
+        if not Decimal('0') <= tax_percent_dec <= Decimal('100'):
+            return _err('tax_percent must be between 0 and 100.')
+        if tax_mode != 'calculated':
+            tax_percent_dec = Decimal('0.00')
 
         # Parse and validate items
         parsed_items = []
@@ -379,13 +393,25 @@ def create_order(
             if price <= 0:
                 return _err(f"Item {idx} '{desc}': unit price must be greater than 0.")
 
+            inventory_id = item.get('inventory_id') or item.get('inventoryId')
+            if inventory_id is not None:
+                try:
+                    inventory_id = int(inventory_id)
+                except (TypeError, ValueError):
+                    return _err(f"Item {idx} '{desc}': inventory_id must be a number.")
+                inventory_item = db.session.get(Inventory, inventory_id)
+                if not inventory_item:
+                    return _err(f"Item {idx} '{desc}': inventory item {inventory_id} was not found.")
+
             line_total = _money(qty) * price
             subtotal  += line_total
-            parsed_items.append({"desc": desc, "qty": qty, "price": price})
+            parsed_items.append({"desc": desc, "qty": qty, "price": price, "inventory_id": inventory_id})
 
         discount_dec     = _money(discount)
         advance_dec      = _money(advance_amount)
-        total_amount     = max(subtotal - discount_dec, Decimal("0.00"))
+        taxable_subtotal = max(subtotal - discount_dec, Decimal("0.00"))
+        tax_amount = _money(taxable_subtotal * tax_percent_dec / Decimal('100')) if tax_mode == 'calculated' else Decimal('0.00')
+        total_amount = taxable_subtotal + tax_amount
         balance          = total_amount - advance_dec
 
         if advance_dec > total_amount:
@@ -393,8 +419,8 @@ def create_order(
                 f"Advance amount ({advance_dec}) cannot exceed order total ({total_amount})."
             )
 
-        # Generate order number
-        order_no = f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{_short_uid()}"
+        # Use the same transaction-backed sequence as the billing form.
+        order_no = get_next_number('ORD')
 
         # Parse delivery date
         d_date = _parse_date(delivery_date)
@@ -410,6 +436,9 @@ def create_order(
             advance_amount=advance_dec,
             discount=discount_dec,
             total_amount=total_amount,
+            tax_mode=tax_mode,
+            tax_percent=tax_percent_dec,
+            tax_amount=tax_amount,
             created_by=_safe_user_id(),
         )
         db.session.add(new_order)
@@ -421,7 +450,19 @@ def create_order(
                 description=itm["desc"],
                 quantity=itm["qty"],
                 unit_price=itm["price"],
+                inventory_id=itm['inventory_id'],
             ))
+
+        # Keep the delivery stock-out rule identical to the order form.  A
+        # delivery can only be confirmed when linked items have enough stock.
+        if status == 'Delivered':
+            db.session.flush()
+            stock_error = _delivery_stock_error(new_order)
+            if stock_error:
+                db.session.rollback()
+                return _err(stock_error)
+            from routes.order_routes import _deduct_stock
+            _deduct_stock(new_order)
 
         db.session.commit()
 
@@ -434,10 +475,13 @@ def create_order(
                 "status": status,
                 "subtotal": float(subtotal),
                 "discount": float(discount_dec),
+                "tax_mode": tax_mode,
+                "tax_percent": float(tax_percent_dec),
+                "tax_amount": float(tax_amount),
                 "total": float(total_amount),
                 "advance": float(advance_dec),
                 "balance": float(balance),
-                "items": [{"description": i["desc"], "quantity": i["qty"], "unit_price": float(i["price"])} for i in parsed_items],
+                "items": [{"description": i["desc"], "quantity": i["qty"], "unit_price": float(i["price"]), "inventory_id": i['inventory_id']} for i in parsed_items],
             },
             "navigate_to": f"/orders/{new_order.id}",
         })
@@ -447,9 +491,19 @@ def create_order(
         return _err(str(exc))
 
 
-def _short_uid(length=6) -> str:
-    import uuid
-    return uuid.uuid4().hex[:length].upper()
+def _delivery_stock_error(order):
+    """Return a readable shortage before the shared delivery helper mutates stock."""
+    requested = {}
+    for item in order.items:
+        if item.inventory_id:
+            requested[item.inventory_id] = requested.get(item.inventory_id, 0) + (item.quantity or 0)
+    for inventory_id, quantity in requested.items():
+        inventory = db.session.get(Inventory, inventory_id)
+        if not inventory or (inventory.quantity or 0) < quantity:
+            name = inventory.display_name if inventory else f'item #{inventory_id}'
+            available = inventory.quantity if inventory else 0
+            return f"Cannot mark delivered: {name} has {available} in stock, but {quantity} is required."
+    return None
 
 def _safe_user_id():
     try:
@@ -526,13 +580,13 @@ def update_order_status(order_id: int, status: str) -> str:
 
     Args:
         order_id: The numeric ID of the order to update
-        status: New status — must be one of: 'Pending', 'Ready', 'Delivered'
+        status: New status — must be one of the configured ERP lifecycle statuses.
 
     Returns:
         JSON with updated order details
     """
     _require_app_context()
-    VALID_STATUSES = {"Pending", "Ready", "Delivered"}
+    VALID_STATUSES = set(STATUS_CHOICES)
     if status not in VALID_STATUSES:
         return _err(f"Invalid status '{status}'. Valid options: {', '.join(VALID_STATUSES)}.")
 
@@ -542,6 +596,24 @@ def update_order_status(order_id: int, status: str) -> str:
             return _err(f"Order ID {order_id} not found.")
 
         old_status   = order.status
+        if old_status == status:
+            return _ok({
+                "message": f"Order #{order.order_no} is already '{status}'.",
+                "order_id": order.id, "order_no": order.order_no, "status": status,
+                "navigate_to": f"/orders/{order.id}",
+            })
+
+        # Delivery is the only stock-out event.  Reuse the existing route
+        # helpers so chat and the normal UI cannot drift apart.
+        if status == 'Delivered':
+            stock_error = _delivery_stock_error(order)
+            if stock_error:
+                return _err(stock_error)
+            from routes.order_routes import _deduct_stock
+            _deduct_stock(order)
+        elif old_status == 'Delivered':
+            from routes.order_routes import _restore_stock
+            _restore_stock(order)
         order.status = status
         db.session.commit()
 

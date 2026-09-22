@@ -18,6 +18,7 @@ SocketIO events (handled in this file via socketio.on decorators):
 
 import json
 import logging
+import re
 import uuid
 
 from flask import Blueprint, request, jsonify, current_app
@@ -39,6 +40,25 @@ from models.chat_history import ChatMessage
 log = logging.getLogger(__name__)
 
 ai_bp = Blueprint('ai', __name__, url_prefix='/api/ai')
+
+_SESSION_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,80}$')
+_SUPPORTED_STT_CONTENT_TYPES = {
+    'audio/webm', 'audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp4',
+    'audio/ogg', 'audio/opus', 'application/ogg',
+}
+
+
+def _session_id(value):
+    """Return a safe client session id, or generate one when it is omitted."""
+    if not value:
+        return str(uuid.uuid4())
+    value = str(value).strip()
+    return value if _SESSION_ID_RE.fullmatch(value) else None
+
+
+def _room_name(user_id, session_id):
+    """Keep Socket.IO rooms private even when a session id is guessed."""
+    return f'ai:{user_id}:{session_id}'
 
 # ---------------------------------------------------------------------------
 # REST Endpoints
@@ -73,11 +93,17 @@ def chat():
     Returns: { text, action, navigate_to, language, tool_calls, error }
     """
     data = request.get_json(silent=True) or {}
-    user_message = (data.get("message") or "").strip()
-    session_id   = (data.get("session_id") or str(uuid.uuid4()))
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+    user_message = str(data.get("message") or "").strip()
+    session_id = _session_id(data.get("session_id"))
 
     if not user_message:
         return jsonify({"error": "Message cannot be empty."}), 400
+    if len(user_message) > current_app.config.get('AI_MAX_MESSAGE_CHARS', 4000):
+        return jsonify({"error": "Message is too long. Please keep it under 4,000 characters."}), 400
+    if not session_id:
+        return jsonify({"error": "Invalid chat session."}), 400
 
     assistant = get_assistant()
 
@@ -116,16 +142,27 @@ def transcribe():
     if 'audio' not in request.files:
         return jsonify({"error": "No audio file uploaded. Use field name 'audio'."}), 400
 
-    audio_file    = request.files['audio']
+    audio_file = request.files['audio']
+    if not audio_file.filename:
+        return jsonify({"error": "No audio file selected."}), 400
+    if audio_file.mimetype and audio_file.mimetype not in _SUPPORTED_STT_CONTENT_TYPES:
+        return jsonify({"error": "Unsupported audio format. Please use WebM, WAV, MP3, M4A, or OGG."}), 415
+
+    max_bytes = current_app.config.get('AI_STT_MAX_UPLOAD_BYTES', 15 * 1024 * 1024)
+    if request.content_length and request.content_length > max_bytes:
+        return jsonify({"error": "Audio is too large. Please record a clip under 15 MB."}), 413
+
     language_hint = request.form.get('language') or None
-    audio_bytes   = audio_file.read()
+    audio_bytes = audio_file.read(max_bytes + 1)
+    if len(audio_bytes) > max_bytes:
+        return jsonify({"error": "Audio is too large. Please record a clip under 15 MB."}), 413
 
     if len(audio_bytes) < 512:
         return jsonify({"text": "", "language": language_hint or "en",
                         "confidence": 0, "error": "Audio too short or empty."}), 200
 
     stt    = STTService()
-    result = stt.transcribe(audio_bytes, language_hint)
+    result = stt.transcribe(audio_bytes, language_hint, filename=audio_file.filename)
     return jsonify(result)
 
 
@@ -137,10 +174,15 @@ def history():
     Query param: ?session_id=<id>&limit=<n>
     """
     session_id = request.args.get('session_id', '')
-    limit      = min(int(request.args.get('limit', 50)), 200)
+    try:
+        limit = min(max(int(request.args.get('limit', 50)), 1), 200)
+    except (TypeError, ValueError):
+        return jsonify({"error": "limit must be a number."}), 400
 
     if not session_id:
         return jsonify({"messages": []})
+    if not _session_id(session_id):
+        return jsonify({"error": "Invalid chat session."}), 400
 
     rows = (
         ChatMessage.query
@@ -187,16 +229,37 @@ def update_config():
         return jsonify({"error": "Admin privileges required."}), 403
 
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
     allowed = {
         'AI_LLM_MODEL', 'AI_STT_BACKEND', 'AI_STT_MODEL_SIZE',
         'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS', 'AI_SARVAM_API_KEY'
     }
     updated = {}
+    valid_backends = {'whisper_local', 'sarvam_api', 'browser'}
+    valid_model_sizes = {'tiny', 'base', 'small', 'medium', 'large-v3'}
+    valid_languages = {'auto', 'en', 'hi', 'gu'}
     for key, val in data.items():
         env_key = key.upper()
-        if env_key in allowed:
-            current_app.config[env_key] = val
-            updated[env_key] = val
+        if env_key not in allowed:
+            continue
+        if env_key == 'AI_STT_BACKEND' and val not in valid_backends:
+            return jsonify({"error": "Invalid STT backend."}), 400
+        if env_key == 'AI_STT_MODEL_SIZE' and val not in valid_model_sizes:
+            return jsonify({"error": "Invalid Whisper model size."}), 400
+        if env_key == 'AI_DEFAULT_LANGUAGE' and val not in valid_languages:
+            return jsonify({"error": "Invalid default language."}), 400
+        if env_key == 'AI_MAX_TOOL_ITERATIONS':
+            try:
+                val = int(val)
+            except (TypeError, ValueError):
+                return jsonify({"error": "AI_MAX_TOOL_ITERATIONS must be a number."}), 400
+            if not 1 <= val <= 10:
+                return jsonify({"error": "AI_MAX_TOOL_ITERATIONS must be between 1 and 10."}), 400
+        elif not isinstance(val, str) or len(val) > 200:
+            return jsonify({"error": f"Invalid value for {env_key}."}), 400
+        current_app.config[env_key] = val
+        updated[env_key] = val
 
     return jsonify({"updated": updated, "message": "Config updated for this session."})
 
@@ -221,9 +284,9 @@ def on_disconnect():
 @socketio.on('join_session')
 def on_join_session(data):
     """Client sends session_id to join its personal room."""
-    session_id = data.get('session_id', '')
-    if session_id:
-        join_room(session_id)
+    session_id = _session_id((data or {}).get('session_id'))
+    if session_id and current_user.is_authenticated:
+        join_room(_room_name(current_user.id, session_id))
         emit('joined', {"session_id": session_id})
 
 
@@ -238,15 +301,24 @@ def on_chat_message(data):
         emit('chat_error', {"error": "Not authenticated."})
         return
 
-    user_message = (data.get('message') or '').strip()
-    session_id   = data.get('session_id') or str(uuid.uuid4())
+    data = data if isinstance(data, dict) else {}
+    user_message = str(data.get('message') or '').strip()
+    session_id = _session_id(data.get('session_id'))
 
     if not user_message:
         emit('chat_error', {"error": "Empty message."})
         return
+    if not session_id:
+        emit('chat_error', {"error": "Invalid chat session."})
+        return
+    if len(user_message) > current_app.config.get('AI_MAX_MESSAGE_CHARS', 4000):
+        emit('chat_error', {"error": "Message is too long. Please keep it under 4,000 characters."})
+        return
+
+    room = _room_name(current_user.id, session_id)
 
     # Notify client we are processing
-    emit('chat_typing', {"status": "thinking"}, room=session_id)
+    emit('chat_typing', {"status": "thinking"}, room=room)
 
     assistant = get_assistant()
 
@@ -258,12 +330,12 @@ def on_chat_message(data):
             "navigate_to": None,
             "tool_calls": [],
             "error": "ollama_unavailable",
-        }, room=session_id)
+        }, room=room)
         return
 
     try:
         result = assistant.chat(user_message, session_id, current_user.id)
-        emit('chat_response', result, room=session_id)
+        emit('chat_response', result, room=room)
     except Exception as exc:
         log.exception("[SocketIO] chat_message error")
-        emit('chat_error', {"error": str(exc)}, room=session_id)
+        emit('chat_error', {"error": "The assistant could not process that request. Please try again."}, room=room)

@@ -1,7 +1,7 @@
 <!-- AI Assistant Floating Widget -->
 <div id="ai-chat-root">
     <!-- Floating Launcher Button -->
-    <button id="ai-chat-launcher" type="button" aria-label="Open AI Assistant" title="Optical AI Assistant">
+    <button id="ai-chat-launcher" type="button" aria-label="Open AI Assistant" aria-expanded="false" aria-controls="ai-chat-window" title="Optical AI Assistant">
         <i class="fas fa-robot"></i>
         <span class="ai-badge"></span>
     </button>
@@ -54,13 +54,13 @@
 
         <!-- Chat Footer / Controls -->
         <div class="ai-footer">
-            <button type="button" id="ai-mic-btn" class="ai-btn-action ai-btn-mic" title="Voice Input (Speech to Text)">
+            <button type="button" id="ai-mic-btn" class="ai-btn-action ai-btn-mic" title="Voice Input (Speech to Text)" aria-label="Start voice input">
                 <i class="fas fa-microphone"></i>
             </button>
             <div class="ai-input-wrap">
-                <input type="text" id="ai-input-text" class="ai-input" placeholder="Type or speak (EN / HI / GU)..." autocomplete="off">
+                <input type="text" id="ai-input-text" class="ai-input" placeholder="Type or speak (EN / HI / GU)..." autocomplete="off" maxlength="4000" aria-label="Message for Optical AI Assistant">
             </div>
-            <button type="button" id="ai-send-btn" class="ai-btn-action ai-btn-send" title="Send">
+            <button type="button" id="ai-send-btn" class="ai-btn-action ai-btn-send" title="Send" aria-label="Send message">
                 <i class="fas fa-paper-plane"></i>
             </button>
         </div>
