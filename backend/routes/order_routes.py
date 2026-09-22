@@ -134,14 +134,13 @@ def new(customer_id):
             for warning in stock_warnings:
                 flash(warning, 'warning')
             
-            # Calculate tax
-            tax_amount = 0
-            if tax_mode == 'calculated' and tax_percent > 0:
-                tax_amount = subtotal * tax_percent / 100
-            
             # Bill-level discount
             bill_discount = float(request.form.get('discount', 0))
-            total_amount = subtotal - bill_discount + tax_amount
+            taxable_subtotal = max(0, subtotal - bill_discount)
+            tax_amount = 0
+            if tax_mode == 'calculated' and tax_percent > 0:
+                tax_amount = taxable_subtotal * tax_percent / 100
+            total_amount = taxable_subtotal + tax_amount
             if total_amount < 0:
                 total_amount = 0
             
@@ -186,7 +185,13 @@ def new(customer_id):
                     discount_amount=item['disc_amt'],
                 )
                 db.session.add(order_item)
-                
+
+            # Delivery is the stock-out event.  Support orders entered directly
+            # as delivered as well as the normal status-transition workflow.
+            if new_order.status == 'Delivered':
+                db.session.flush()
+                _deduct_stock(new_order)
+
             db.session.commit()
             flash('Order created successfully!', 'success')
             return redirect(url_for('order.view', id=new_order.id))
@@ -269,6 +274,12 @@ def edit(id):
             if scheduled_date:
                 order.delivery_date, order.delivery_time = scheduled_date, scheduled_time
 
+            # A delivered order has already affected stock. Restore its old
+            # lines before replacing them so a later delivery reconciliation
+            # applies exactly the edited quantities, once.
+            if old_status == 'Delivered':
+                _restore_stock(order)
+
             # 2. Re-create Line Items (Delete Old -> Add New)
             OrderItem.query.filter_by(order_id=order.id).delete()
             
@@ -307,20 +318,21 @@ def edit(id):
                     )
                     db.session.add(new_item)
 
-            # 3. Recalculate Tax
+            # 3. Recalculate Tax after the bill-level discount. This matches
+            # the totals preview on the order forms.
             tax_amount = 0
+            taxable_subtotal = max(0, subtotal - float(order.discount or 0))
             if order.tax_mode == 'calculated' and order.tax_percent and float(order.tax_percent) > 0:
-                tax_amount = subtotal * float(order.tax_percent) / 100
+                tax_amount = taxable_subtotal * float(order.tax_percent) / 100
             order.tax_amount = tax_amount
             
             # 4. Recalculate Total
-            total_amount = subtotal - float(order.discount or 0) + tax_amount
-            if total_amount < 0:
-                total_amount = 0
+            total_amount = taxable_subtotal + tax_amount
             order.total_amount = total_amount
             
-            # 5. Stock deduction on status change to Delivered
-            if order.status == 'Delivered' and old_status != 'Delivered':
+            # 5. Reconcile inventory with the freshly saved order lines.
+            if order.status == 'Delivered':
+                db.session.flush()
                 _deduct_stock(order)
             
             db.session.commit()
@@ -344,6 +356,15 @@ def _deduct_stock(order):
                 inv.quantity = max(0, inv.quantity - item.quantity)
 
 
+def _restore_stock(order):
+    """Put back stock consumed by a delivered order before it is changed/deleted."""
+    for item in order.items:
+        if item.inventory_id:
+            inv = db.session.get(Inventory, item.inventory_id)
+            if inv:
+                inv.quantity = (inv.quantity or 0) + (item.quantity or 0)
+
+
 @order_bp.route('/delete/<int:id>', methods=['POST'])
 @login_required
 def delete(id):
@@ -352,6 +373,8 @@ def delete(id):
     
     if current_user.is_admin:
         try:
+            if order.status == 'Delivered':
+                _restore_stock(order)
             db.session.delete(order)
             db.session.commit()
             flash(f'Order #{order.order_no} deleted permanently.', 'success')
