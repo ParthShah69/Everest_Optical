@@ -61,6 +61,8 @@ def create_app(config_class=Config):
     app.register_blueprint(search_bp)
     from routes.tax_config_routes import tax_config_bp
     app.register_blueprint(tax_config_bp)
+    from routes.export_routes import export_bp
+    app.register_blueprint(export_bp)
     import models.chat_history
     import models.payment
     import models.sequence
