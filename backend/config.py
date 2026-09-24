@@ -69,6 +69,10 @@ class Config:
     # Max ReAct tool-call iterations before giving up
     AI_MAX_TOOL_ITERATIONS = int(os.environ.get('AI_MAX_TOOL_ITERATIONS', 6))
 
+    # Number of recent user/assistant messages supplied when resuming a chat.
+    # It is bounded in the service to keep provider context usage predictable.
+    AI_CONTEXT_MESSAGE_LIMIT = int(os.environ.get('AI_CONTEXT_MESSAGE_LIMIT', 16))
+
     # Default assistant response language: 'en' | 'hi' | 'gu' | 'auto'
     AI_DEFAULT_LANGUAGE = os.environ.get('AI_DEFAULT_LANGUAGE', 'auto')
 

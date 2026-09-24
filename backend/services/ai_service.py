@@ -150,6 +150,7 @@ class AIAssistant:
             self.groq_base_url = cfg.get('AI_GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
             self.groq_api_key  = cfg.get('GROQ_API_KEY', '')
             self.max_iters     = int(cfg.get('AI_MAX_TOOL_ITERATIONS', 6))
+            self.context_limit = min(max(int(cfg.get('AI_CONTEXT_MESSAGE_LIMIT', 16)), 4), 40)
         except RuntimeError:
             self.provider    = 'ollama'
             self.model       = 'qwen3:8b'
@@ -157,6 +158,7 @@ class AIAssistant:
             self.groq_base_url = 'https://api.groq.com/openai/v1'
             self.groq_api_key = ''
             self.max_iters   = 6
+            self.context_limit = 16
 
         if self.provider not in {'ollama', 'groq'}:
             log.warning("[AI] Unknown provider '%s'; falling back to ollama", self.provider)
@@ -224,7 +226,9 @@ class AIAssistant:
         lang = detect_language(user_message)
         log.info(f"[AI] Chat request from user={user_id} session={session_id[:8]} lang={lang}")
 
-        # Fetch conversation history for this session (last 10 messages)
+        # The full saved transcript is available to the user.  Supply a
+        # bounded private window to the model so long chats stay relevant
+        # without exhausting hosted-provider context/token budgets.
         history_rows = self._history_rows(session_id, user_id)
         history_rows.reverse()
 
@@ -436,8 +440,7 @@ class AIAssistant:
             log.warning(f"[AI] Could not load chat history: {exc}")
             return []
 
-    @staticmethod
-    def _history_rows(session_id: str, user_id: int):
+    def _history_rows(self, session_id: str, user_id: int):
         """Read history without allowing a transient DB error to crash chat."""
         try:
             rows = (
@@ -445,7 +448,7 @@ class AIAssistant:
                 .filter_by(session_id=session_id, user_id=user_id)
                 .filter(ChatMessage.role.in_(["user", "assistant"]))
                 .order_by(ChatMessage.created_at.desc())
-                .limit(10)
+                .limit(self.context_limit)
                 .all()
             )
             return rows

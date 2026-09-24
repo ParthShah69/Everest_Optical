@@ -1,7 +1,7 @@
 """
 ai_tools.py
 ===========
-All 14 ERP tool functions exposed to the LLM.
+ERP tool functions exposed to the LLM.
 
 Each function:
   - Has a docstring that the Ollama SDK converts to JSON schema.
@@ -11,8 +11,9 @@ Each function:
 
 Tool registry (imported by ai_service.py):
     TOOLS = [
-        search_customers, create_customer, get_customer_details, edit_customer,
-        create_order, search_orders, update_order_status,
+        search_customers, create_customer, get_customer_details,
+        get_customers_details, edit_customer, create_order, search_orders,
+        get_order_details, update_order_status,
         add_prescription,
         search_inventory, add_inventory_item, update_inventory_stock,
         get_dashboard_stats,
@@ -269,6 +270,66 @@ def get_customer_details(customer_id: int) -> str:
 
 
 # ===========================================================================
+# TOOL 3B — get_customers_details
+# ===========================================================================
+
+def get_customers_details(customer_ids: list[int]) -> str:
+    """
+    Compare the profiles and account position of several existing customers.
+    This is read-only. Use search_customers first when the numeric IDs are not
+    known; do not use it to create or edit any customer.
+
+    Args:
+        customer_ids: List of 1 to 20 numeric customer IDs to retrieve
+
+    Returns:
+        JSON containing one compact profile per requested customer, including
+        contact details, order count, total billed, due amount, credit limit,
+        loyalty points, and a link to each profile.
+    """
+    _require_app_context()
+    try:
+        if not isinstance(customer_ids, list) or not customer_ids:
+            return _err("customer_ids must be a non-empty list of customer IDs.")
+        if len(customer_ids) > 20:
+            return _err("Please request no more than 20 customers at once.")
+        try:
+            requested_ids = list(dict.fromkeys(int(customer_id) for customer_id in customer_ids))
+        except (TypeError, ValueError):
+            return _err("Every customer_id must be a numeric value.")
+
+        customers = Customer.query.filter(Customer.id.in_(requested_ids)).all()
+        by_id = {customer.id: customer for customer in customers}
+        results = []
+        for customer_id in requested_ids:
+            customer = by_id.get(customer_id)
+            if not customer:
+                results.append({"id": customer_id, "found": False})
+                continue
+            orders = customer.orders or []
+            total_billed = sum(float(order.total_amount or 0) for order in orders)
+            total_due = sum(max(float(order.remaining_due or 0), 0) for order in orders)
+            results.append({
+                "id": customer.id,
+                "found": True,
+                "name": customer.name,
+                "phone": customer.phone,
+                "email": customer.email or "",
+                "city": customer.city or "",
+                "order_count": len(orders),
+                "total_billed": round(total_billed, 2),
+                "total_due": round(total_due, 2),
+                "credit_limit": float(customer.credit_limit or 0),
+                "loyalty_points": customer.loyalty_points or 0,
+                "navigate_to": f"/customers/edit/{customer.id}",
+            })
+        return _ok({"customers": results, "count": len(results)})
+    except Exception as exc:
+        log.exception("[Tool:get_customers_details]")
+        return _err(str(exc))
+
+
+# ===========================================================================
 # TOOL 4 — edit_customer
 # ===========================================================================
 
@@ -520,17 +581,33 @@ def _safe_user_id():
 
 def search_orders(
     customer_name: str = None,
+    customer_id: int = None,
     order_no: str = None,
     status: str = None,
+    from_date: str = None,
+    to_date: str = None,
+    due_only: bool = False,
+    delivery_before: str = None,
     limit: int = 10,
 ) -> str:
     """
-    Search orders by customer name, order number, or status filter.
+    Search bills/orders using customer, status, date, delivery, and due filters.
+    This is read-only and is the preferred tool for a filtered bill list. Use
+    get_order_details when the user asks to see one bill with its line items
+    and payment receipts.
 
     Args:
         customer_name: Partial customer name to search for (optional)
+        customer_id: Exact numeric customer ID (optional)
         order_no: Order number (partial match accepted) (optional)
-        status: Filter by status — 'Pending', 'Ready', or 'Delivered' (optional)
+        status: Exact order lifecycle status, for example 'Pending', 'Ready',
+                or 'Delivered' (optional)
+        from_date: Include bills issued on/after YYYY-MM-DD, 'today', or a
+                   supported natural date word (optional)
+        to_date: Include bills issued on/before YYYY-MM-DD, 'today', or a
+                 supported natural date word (optional)
+        due_only: If true, return only orders with a remaining unpaid amount
+        delivery_before: Include orders due for delivery on/before this date
         limit: Maximum results (default 10, max 50)
 
     Returns:
@@ -538,17 +615,45 @@ def search_orders(
     """
     _require_app_context()
     try:
-        limit = min(int(limit), 50)
+        limit = max(1, min(int(limit), 50))
         q = Order.query.join(Customer)
+
+        parsed_from = _parse_date(from_date)
+        parsed_to = _parse_date(to_date)
+        parsed_delivery = _parse_date(delivery_before)
+        if from_date and not parsed_from:
+            return _err("from_date must be YYYY-MM-DD or a supported natural date such as 'today'.")
+        if to_date and not parsed_to:
+            return _err("to_date must be YYYY-MM-DD or a supported natural date such as 'today'.")
+        if delivery_before and not parsed_delivery:
+            return _err("delivery_before must be YYYY-MM-DD or a supported natural date such as 'today'.")
+        if parsed_from and parsed_to and parsed_from > parsed_to:
+            return _err("from_date cannot be after to_date.")
 
         if customer_name:
             q = q.filter(Customer.name.ilike(f"%{customer_name.strip()}%"))
+        if customer_id is not None:
+            q = q.filter(Order.customer_id == int(customer_id))
         if order_no:
             q = q.filter(Order.order_no.ilike(f"%{order_no.strip()}%"))
         if status:
+            if status not in STATUS_CHOICES:
+                return _err(f"Invalid status '{status}'. Choose from: {', '.join(STATUS_CHOICES)}.")
             q = q.filter(Order.status == status)
+        if parsed_from:
+            q = q.filter(Order.issue_date >= parsed_from)
+        if parsed_to:
+            q = q.filter(Order.issue_date <= parsed_to)
+        if parsed_delivery:
+            q = q.filter(Order.delivery_date.isnot(None), Order.delivery_date <= parsed_delivery)
 
-        orders = q.order_by(Order.created_at.desc()).limit(limit).all()
+        # Remaining due considers split receipts as well as legacy advances, so
+        # it is calculated by the model property below rather than an unsafe
+        # SQL shortcut. Fetch a bounded candidate set before applying it.
+        orders = q.order_by(Order.created_at.desc()).limit(50 if due_only else limit).all()
+
+        if due_only:
+            orders = [order for order in orders if float(order.remaining_due or 0) > 0][:limit]
 
         results = [
             {
@@ -559,14 +664,112 @@ def search_orders(
                 "total": float(o.total_amount or 0),
                 "advance": float(o.advance_amount or 0),
                 "balance": float(o.balance_amount or 0),
+                "paid": round(float(o.total_paid or 0), 2),
+                "remaining_due": round(float(o.remaining_due or 0), 2),
                 "issue_date": str(o.issue_date),
                 "delivery_date": str(o.delivery_date) if o.delivery_date else None,
+                "navigate_to": f"/orders/{o.id}",
             }
             for o in orders
         ]
         return _ok({"orders": results, "count": len(results)})
     except Exception as exc:
         log.exception("[Tool:search_orders]")
+        return _err(str(exc))
+
+
+# ===========================================================================
+# TOOL 6B — get_order_details
+# ===========================================================================
+
+def get_order_details(order_id: int = None, order_no: str = None) -> str:
+    """
+    Show one complete bill/order, including customer contact details, every
+    line item, GST/tax, status, delivery schedule, and payment receipts.
+    This tool is read-only. Provide either order_id or order_no; order_no is
+    useful when a customer reads their printed bill number aloud.
+
+    Args:
+        order_id: Exact numeric order ID (optional when order_no is supplied)
+        order_no: Exact bill/order number, for example 'ORD-0001' (optional
+                  when order_id is supplied)
+
+    Returns:
+        JSON bill data and a link to open the order in the ERP.
+    """
+    _require_app_context()
+    if order_id is None and not (order_no or "").strip():
+        return _err("Provide an order_id or an order_no to show a bill.")
+    try:
+        order = None
+        if order_id is not None:
+            order = db.session.get(Order, int(order_id))
+        if order is None and (order_no or "").strip():
+            order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
+        if not order:
+            return _err("Order was not found.")
+
+        payments = [
+            {
+                "id": payment.id,
+                "receipt_no": payment.receipt_no or "",
+                "amount": float(payment.amount or 0),
+                "method": payment.payment_method,
+                "type": payment.payment_type or "",
+                "remark": payment.remark or "",
+                "date": payment.created_at.isoformat() if payment.created_at else None,
+            }
+            for payment in (order.payments or [])
+        ]
+        items = [
+            {
+                "id": item.id,
+                "description": item.display_name,
+                "quantity": item.quantity,
+                "unit_price": float(item.unit_price or 0),
+                "discount_percent": float(item.discount_percent or 0),
+                "discount_amount": float(item.discount_amount or 0),
+                "line_total": float(item.total_price or 0),
+                "inventory_id": item.inventory_id,
+            }
+            for item in (order.items or [])
+        ]
+        customer = order.customer
+        return _ok({
+            "order": {
+                "id": order.id,
+                "order_no": order.order_no,
+                "status": order.status,
+                "issue_date": str(order.issue_date),
+                "delivery_date": str(order.delivery_date) if order.delivery_date else None,
+                "delivery_time": order.delivery_time.isoformat() if order.delivery_time else None,
+                "delivery_in_days": order.delivery_in_days,
+                "delivery_in_hours": order.delivery_in_hours,
+                "delivery_mode": order.delivery_mode,
+                "subtotal": round(sum(float(item.gross_total or 0) for item in order.items), 2),
+                "discount": float(order.discount or 0),
+                "tax_mode": order.tax_mode,
+                "tax_percent": float(order.tax_percent or 0),
+                "tax_amount": float(order.tax_amount or 0),
+                "total": float(order.total_amount or 0),
+                "advance": float(order.advance_amount or 0),
+                "paid": round(float(order.total_paid or 0), 2),
+                "remaining_due": round(float(order.remaining_due or 0), 2),
+            },
+            "customer": {
+                "id": customer.id if customer else None,
+                "name": customer.name if customer else "—",
+                "phone": customer.phone if customer else "",
+                "email": customer.email if customer else "",
+            },
+            "items": items,
+            "payments": payments,
+            "navigate_to": f"/orders/{order.id}",
+        })
+    except (TypeError, ValueError):
+        return _err("order_id must be a numeric value.")
+    except Exception as exc:
+        log.exception("[Tool:get_order_details]")
         return _err(str(exc))
 
 
@@ -739,14 +942,24 @@ def add_prescription(
 def search_inventory(
     query: str = None,
     low_stock_only: bool = False,
+    item_type: str = None,
+    brand: str = None,
+    location: str = None,
+    in_stock_only: bool = False,
     limit: int = 15,
 ) -> str:
     """
-    Search inventory items by model name, brand, or frame type.
+    Search inventory items by model, brand, type, or storage location. Use
+    filters to answer stock questions without changing any quantity.
 
     Args:
         query: Search term (model name, brand, frame type) — optional
         low_stock_only: If True, only return items at or below low-stock threshold
+        item_type: Exact item class such as Frame, Lens, Contact Lens, or
+                   Accessory (optional)
+        brand: Partial brand name filter (optional)
+        location: Partial rack/drawer/shelf location filter (optional)
+        in_stock_only: If True, exclude zero and negative quantities
         limit: Maximum results (default 15, max 50)
 
     Returns:
@@ -754,7 +967,7 @@ def search_inventory(
     """
     _require_app_context()
     try:
-        limit = min(int(limit), 50)
+        limit = max(1, min(int(limit), 50))
         q = Inventory.query
 
         if query:
@@ -768,6 +981,14 @@ def search_inventory(
             )
         if low_stock_only:
             q = q.filter(Inventory.quantity <= Inventory.low_stock_threshold)
+        if item_type:
+            q = q.filter(db.func.lower(Inventory.item_type) == item_type.strip().lower())
+        if brand:
+            q = q.filter(Inventory.brand.ilike(f"%{brand.strip()}%"))
+        if location:
+            q = q.filter(Inventory.location.ilike(f"%{location.strip()}%"))
+        if in_stock_only:
+            q = q.filter(Inventory.quantity > 0)
 
         items = q.order_by(Inventory.quantity.asc()).limit(limit).all()
 
@@ -777,6 +998,8 @@ def search_inventory(
                 "model": i.model_name,
                 "brand": i.brand or "",
                 "frame_type": i.frame_type or "",
+                "item_type": i.item_type or "",
+                "barcode": i.barcode or "",
                 "quantity": i.quantity,
                 "location": i.location,
                 "selling_price": float(i.selling_price or 0),
@@ -1113,9 +1336,11 @@ TOOLS = [
     search_customers,
     create_customer,
     get_customer_details,
+    get_customers_details,
     edit_customer,
     create_order,
     search_orders,
+    get_order_details,
     update_order_status,
     add_prescription,
     search_inventory,

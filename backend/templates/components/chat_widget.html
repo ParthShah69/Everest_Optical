@@ -1,5 +1,5 @@
 <!-- AI Assistant Floating Widget -->
-<div id="ai-chat-root">
+<div id="ai-chat-root" data-chat-user="{{ current_user.id }}">
     <!-- Floating Launcher Button -->
     <button id="ai-chat-launcher" type="button" aria-label="Open AI Assistant" aria-expanded="false" aria-controls="ai-chat-window" title="Optical AI Assistant">
         <i class="fas fa-robot"></i>
@@ -23,6 +23,12 @@
                 </div>
             </div>
             <div class="ai-header-actions">
+                <button type="button" id="ai-history-btn" class="ai-header-btn" title="Conversation history" aria-label="Open conversation history" aria-controls="ai-history-panel" aria-expanded="false">
+                    <i class="fas fa-history"></i>
+                </button>
+                <button type="button" id="ai-new-chat-btn" class="ai-header-btn" title="New chat" aria-label="Start a new chat">
+                    <i class="fas fa-pen-to-square"></i>
+                </button>
                 <button type="button" id="ai-min-btn" class="ai-header-btn" title="Minimize" aria-label="Minimize">
                     <i class="fas fa-minus"></i>
                 </button>
@@ -31,6 +37,15 @@
                 </button>
             </div>
         </div>
+
+        <section id="ai-history-panel" class="ai-history-panel hidden" aria-label="Saved conversations" aria-hidden="true">
+            <div class="ai-history-heading">
+                <span>Conversations</span>
+                <button type="button" id="ai-history-close-btn" class="ai-history-close" aria-label="Close conversation history"><i class="fas fa-times"></i></button>
+            </div>
+            <p class="ai-history-note">Conversations are saved for this signed-in account on this browser.</p>
+            <div id="ai-history-list" class="ai-history-list" role="list"></div>
+        </section>
 
         <!-- Quick Suggestions Chips (Multilingual) -->
         <div id="ai-suggestions" class="ai-suggestions">
@@ -42,7 +57,7 @@
         </div>
 
         <!-- Chat Body / Messages -->
-        <div id="ai-messages" class="ai-body">
+        <div id="ai-messages" class="ai-body" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation messages">
             <div class="ai-msg assistant">
                 नमस्ते! 👋 હું તમારો Optical ERP AI Assistant છું.
                 <br><br>

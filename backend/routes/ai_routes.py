@@ -9,6 +9,7 @@ Flask Blueprint exposing AI assistant endpoints:
   GET   /api/ai/config      – Fetch current AI configuration
   POST  /api/ai/config      – Update AI configuration (admin only)
   GET   /api/ai/history     – Retrieve chat history for session
+  GET   /api/ai/sessions    – List this user's saved conversations
 
 SocketIO events (handled in this file via socketio.on decorators):
   connect        – Authenticate + register session
@@ -111,11 +112,17 @@ def chat():
     if not assistant.is_available():
         model = current_app.config.get('AI_LLM_MODEL', 'qwen3:8b')
         provider = current_app.config.get('AI_PROVIDER', 'ollama')
-        return jsonify({
-            "text": (
+        offline_text = (
                 f"⚠️ The AI assistant is offline. "
                 f"The configured {provider} model '{model}' is unavailable."
-            ),
+        )
+        # Keep the operator's attempted conversation visible and resumable even
+        # during a temporary provider outage.  A later message in this same
+        # session will still receive the bounded previous context.
+        assistant._save_message(session_id, current_user.id, 'user', user_message, original_text=user_message)
+        assistant._save_message(session_id, current_user.id, 'assistant', offline_text)
+        return jsonify({
+            "text": offline_text,
             "action": None,
             "navigate_to": None,
             "language": "en",
@@ -189,10 +196,11 @@ def history():
         ChatMessage.query
         .filter_by(session_id=session_id, user_id=current_user.id)
         .filter(ChatMessage.role.in_(["user", "assistant"]))
-        .order_by(ChatMessage.created_at.asc())
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
         .limit(limit)
         .all()
     )
+    rows.reverse()
     messages = [
         {
             "id": r.id,
@@ -205,6 +213,71 @@ def history():
         for r in rows
     ]
     return jsonify({"messages": messages, "session_id": session_id})
+
+
+def _conversation_title(content):
+    """Create a compact plain-text label without trusting message markup."""
+    text = ' '.join(str(content or '').split())
+    return (text[:77] + '...') if len(text) > 80 else (text or 'New conversation')
+
+
+@ai_bp.route('/sessions', methods=['GET'])
+@login_required
+def sessions():
+    """List saved conversations belonging only to the authenticated user.
+
+    ChatMessage is the source of truth: a session is represented by its id and
+    needs no separate mutable row.  Only a short title and metadata are sent
+    here; opening a conversation uses the already access-controlled history
+    endpoint.
+    """
+    try:
+        limit = min(max(int(request.args.get('limit', 30)), 1), 100)
+    except (TypeError, ValueError):
+        return jsonify({"error": "limit must be a number."}), 400
+
+    try:
+        stats = (
+            db.session.query(
+                ChatMessage.session_id.label('session_id'),
+                db.func.max(ChatMessage.created_at).label('updated_at'),
+                db.func.count(ChatMessage.id).label('message_count'),
+            )
+            .filter_by(user_id=current_user.id)
+            .filter(ChatMessage.role.in_(['user', 'assistant']))
+            .group_by(ChatMessage.session_id)
+            .order_by(db.func.max(ChatMessage.created_at).desc())
+            .limit(limit)
+            .all()
+        )
+        session_ids = [row.session_id for row in stats]
+        first_user_messages = (
+            ChatMessage.query
+            .filter(ChatMessage.user_id == current_user.id)
+            .filter(ChatMessage.session_id.in_(session_ids))
+            .filter(ChatMessage.role == 'user')
+            .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+            .all()
+        ) if session_ids else []
+        titles = {}
+        for row in first_user_messages:
+            titles.setdefault(row.session_id, _conversation_title(row.content))
+
+        return jsonify({
+            'sessions': [
+                {
+                    'session_id': row.session_id,
+                    'title': titles.get(row.session_id, 'Conversation'),
+                    'message_count': row.message_count,
+                    'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+                }
+                for row in stats
+            ]
+        })
+    except Exception as exc:
+        log.warning('[AI] Could not list chat sessions: %s', exc)
+        db.session.rollback()
+        return jsonify({'sessions': []})
 
 
 @ai_bp.route('/config', methods=['GET'])
@@ -329,8 +402,11 @@ def on_chat_message(data):
 
     if not assistant.is_available():
         model = current_app.config.get('AI_LLM_MODEL', 'qwen3:8b')
+        offline_text = f"⚠️ AI offline. The configured model '{model}' is unavailable."
+        assistant._save_message(session_id, current_user.id, 'user', user_message, original_text=user_message)
+        assistant._save_message(session_id, current_user.id, 'assistant', offline_text)
         emit('chat_response', {
-            "text": f"⚠️ AI offline. The configured model '{model}' is unavailable.",
+            "text": offline_text,
             "action": None,
             "navigate_to": None,
             "tool_calls": [],
