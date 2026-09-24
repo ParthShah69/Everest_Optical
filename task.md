@@ -31,6 +31,8 @@
 - [x] Harden chatbot/STT fallbacks and align AI-created orders with sequential billing, GST, and delivery stock rules.
 - [x] Add a Vercel-compatible Groq adapter, truthful AI health status, and browser-only free STT configuration path.
 - [ ] Add the user-owned free Groq key to Vercel and verify a live provider response after deployment.
+- [x] Add private saved AI conversations with New Chat, History, cross-device session recovery, and bounded relevant context.
+- [x] Add safe AI bill detail, multi-customer comparison, order/inventory filters, and operator capability documentation.
 
 ## UI and counter-side productivity
 
