@@ -20,6 +20,7 @@ SocketIO events (handled in this file via socketio.on decorators):
 import json
 import logging
 import re
+import time
 import uuid
 
 from flask import Blueprint, request, jsonify, current_app
@@ -43,6 +44,22 @@ log = logging.getLogger(__name__)
 ai_bp = Blueprint('ai', __name__, url_prefix='/api/ai')
 
 _SESSION_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,80}$')
+# Sliding window tracker for client-side chat overspam prevention
+_recent_chat_requests = {}
+
+def _check_overspam(user_id: int, window_sec: float = 4.0, max_requests: int = 3) -> int:
+    """Return cooldown pause seconds if user is overspamming messages, or 0 if OK."""
+    now = time.time()
+    user_times = _recent_chat_requests.get(user_id, [])
+    # Filter times within window
+    user_times = [t for t in user_times if now - t < window_sec]
+    if len(user_times) >= max_requests:
+        cooldown = max(2, int(window_sec - (now - user_times[0])) + 1)
+        return min(cooldown, 8)
+    user_times.append(now)
+    _recent_chat_requests[user_id] = user_times
+    return 0
+
 _SUPPORTED_STT_CONTENT_TYPES = {
     'audio/webm', 'audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp4',
     'audio/ogg', 'audio/opus', 'application/ogg',
@@ -68,21 +85,37 @@ def _room_name(user_id, session_id):
 @ai_bp.route('/health', methods=['GET'])
 @login_required
 def health():
-    """Check if Ollama + STT backends are available."""
+    """Check if Ollama + STT backends are available with diagnostic details."""
     assistant = get_assistant()
     stt = STTService()
+    cfg = current_app.config
+    has_groq_key = bool(cfg.get('GROQ_API_KEY'))
+    llm_available = assistant.is_available()
+
+    diagnostic = ""
+    if not llm_available:
+        if assistant.provider == 'groq':
+            if not has_groq_key:
+                diagnostic = "Free Groq API key is not configured. Add GROQ_API_KEY in backend/.env (https://console.groq.com/keys)."
+            else:
+                diagnostic = f"Groq reachability check failed for model '{assistant.model}'. Check network or API key."
+        else:
+            diagnostic = f"Ollama is offline or model '{assistant.model}' is not installed."
+
     return jsonify({
         "llm": {
-            "available": assistant.is_available(),
+            "available": llm_available,
             "model": assistant.model,
             "provider": assistant.provider,
+            "has_key": has_groq_key if assistant.provider == 'groq' else True,
+            "diagnostic": diagnostic,
         },
         "stt": {
             "available": stt.is_available(),
             "backend": stt.backend,
             "model_size": stt.model_size,
         },
-        "realtime": {"enabled": not current_app.config.get('AI_DISABLE_SOCKETIO', False)},
+        "realtime": {"enabled": not cfg.get('AI_DISABLE_SOCKETIO', False)},
     })
 
 
@@ -107,15 +140,38 @@ def chat():
     if not session_id:
         return jsonify({"error": "Invalid chat session."}), 400
 
+    # Anti-overspam protection: take a pause if rapid spam detected
+    cooldown = _check_overspam(current_user.id)
+    if cooldown > 0:
+        pause_msg = f"⏳ Taking a brief pause to process your messages smoothly. Resuming automatically in {cooldown}s..."
+        return jsonify({
+            "text": pause_msg,
+            "action": "pause_and_continue",
+            "pause_seconds": cooldown,
+            "is_rate_limited": True,
+            "can_continue": True,
+            "guidance": "Rapid inputs detected. The system takes a short pause to ensure reliable processing.",
+            "language": "en",
+            "tool_calls": [],
+            "error": "rate_limited",
+        }), 200
+
     assistant = get_assistant()
 
     if not assistant.is_available():
-        model = current_app.config.get('AI_LLM_MODEL', 'qwen3:8b')
-        provider = current_app.config.get('AI_PROVIDER', 'ollama')
-        offline_text = (
+        model = assistant.model
+        provider = assistant.provider
+        has_groq_key = bool(current_app.config.get('GROQ_API_KEY'))
+        if provider == 'groq' and not has_groq_key:
+            offline_text = (
+                "⚠️ The AI assistant is offline. Free Groq API key is not configured yet. "
+                "Add your free key from https://console.groq.com/keys into backend/.env (GROQ_API_KEY=gsk_...)."
+            )
+        else:
+            offline_text = (
                 f"⚠️ The AI assistant is offline. "
                 f"The configured {provider} model '{model}' is unavailable."
-        )
+            )
         # Keep the operator's attempted conversation visible and resumable even
         # during a temporary provider outage.  A later message in this same
         # session will still receive the bounded previous context.
@@ -293,6 +349,7 @@ def get_config():
         "stt_model_size": cfg.get('AI_STT_MODEL_SIZE', 'small'),
         "default_language": cfg.get('AI_DEFAULT_LANGUAGE', 'auto'),
         "sarvam_key_set": bool(cfg.get('AI_SARVAM_API_KEY')),
+        "groq_key_set":   bool(cfg.get('GROQ_API_KEY')),
     })
 
 
@@ -308,7 +365,7 @@ def update_config():
         return jsonify({"error": "Request body must be a JSON object."}), 400
     allowed = {
         'AI_PROVIDER', 'AI_LLM_MODEL', 'AI_STT_BACKEND', 'AI_STT_MODEL_SIZE',
-        'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS', 'AI_SARVAM_API_KEY'
+        'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS', 'AI_SARVAM_API_KEY', 'GROQ_API_KEY'
     }
     updated = {}
     valid_backends = {'whisper_local', 'sarvam_api', 'groq_api', 'browser'}
@@ -419,4 +476,4 @@ def on_chat_message(data):
         emit('chat_response', result, room=room)
     except Exception as exc:
         log.exception("[SocketIO] chat_message error")
-        emit('chat_error', {"error": "The assistant could not process that request. Please try again."}, room=room)
+        emit('chat_error', {"error": "The assistant could not process that request. Loading state will resume on next input."}, room=room)
