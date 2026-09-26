@@ -358,12 +358,14 @@
         }
     }
 
-    async function sendMessage() {
-        const text = (chatInput.value || '').trim();
+    async function sendMessage(retryText) {
+        const text = retryText || (chatInput.value || '').trim();
         if (!text || isThinking) return;
 
-        appendMessage('user', text);
-        chatInput.value = '';
+        if (!retryText) {
+            appendMessage('user', text);
+            chatInput.value = '';
+        }
         showTypingIndicator();
 
         if (socket && socket.connected) {
@@ -374,7 +376,7 @@
         } else {
             // REST Fallback
             const controller = new AbortController();
-            const timeout = window.setTimeout(() => controller.abort(), 45000);
+            const timeout = window.setTimeout(() => controller.abort(), 60000);
             try {
                 const response = await fetch('/api/ai/chat', {
                     method: 'POST',
@@ -386,11 +388,13 @@
                 if (!response.ok) {
                     throw new Error(data.error || `Request failed (${response.status})`);
                 }
-                handleAssistantResponse(data);
+                handleAssistantResponse(data, text);
             } catch (err) {
-                appendMessage('system', err.name === 'AbortError'
-                    ? 'The assistant took too long to respond. Please try again.'
-                    : (err.message || 'Error sending message. Please try again.'));
+                if (err.name === 'AbortError') {
+                    appendMessage('system', '⏳ The assistant is still processing — please wait a moment and try again.');
+                } else {
+                    appendMessage('system', err.message || '⚠️ Error sending message. Please try again.');
+                }
                 console.error(err);
             } finally {
                 window.clearTimeout(timeout);
@@ -399,10 +403,38 @@
         }
     }
 
-    function handleAssistantResponse(data) {
+    function handleAssistantResponse(data, originalText) {
         if (!data) return;
 
-        if (data.error && data.error !== 'provider_unavailable') {
+        // Rate-limit pause with auto-retry countdown
+        if (data.action === 'pause_and_continue' && data.is_rate_limited) {
+            const pauseSec = data.pause_seconds || 5;
+            removeTypingIndicator();
+            const bubble = document.createElement('div');
+            bubble.className = 'ai-msg assistant ai-rate-pause';
+            bubble.setAttribute('role', 'status');
+            bubble.setAttribute('aria-live', 'polite');
+            bubble.innerHTML = `⏳ <span class="ai-pause-msg">Processing — resuming in <strong class="ai-pause-count">${pauseSec}</strong>s...</span>`;
+            if (messagesContainer) messagesContainer.appendChild(bubble);
+            scrollToBottom();
+            if (chatInput) chatInput.disabled = true;
+
+            let remaining = pauseSec;
+            const countEl = bubble.querySelector('.ai-pause-count');
+            const tick = setInterval(() => {
+                remaining -= 1;
+                if (countEl) countEl.textContent = remaining;
+                if (remaining <= 0) {
+                    clearInterval(tick);
+                    bubble.remove();
+                    if (chatInput) chatInput.disabled = false;
+                    if (originalText) sendMessage(originalText);
+                }
+            }, 1000);
+            return;
+        }
+
+        if (data.error && data.error !== 'provider_unavailable' && data.error !== 'rate_limited') {
             appendMessage('system', data.text || data.error);
             return;
         }
