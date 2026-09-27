@@ -20,6 +20,7 @@ Public interface:
 import json
 import inspect
 import logging
+import re
 import time
 from decimal import Decimal
 from types import UnionType
@@ -51,6 +52,14 @@ class AIProviderError(Exception):
     """A safe, provider-neutral error for the chat route and UI."""
 
 
+class AIRateLimitError(Exception):
+    """Raised when Groq or provider returns HTTP 429 rate limit."""
+    def __init__(self, retry_after: float = 4.0, message: str = None):
+        self.retry_after = max(2.0, min(float(retry_after or 4.0), 30.0))
+        self.message = message or f"Rate limit reached. Cooling down for {int(self.retry_after)}s."
+        super().__init__(self.message)
+
+
 def _json_type(annotation):
     """Translate the simple Python tool annotations into JSON-schema types."""
     if annotation in (inspect.Parameter.empty, str, None):
@@ -77,15 +86,55 @@ def _json_type(annotation):
     return {"type": "string"}
 
 
+def _parse_docstring_args(doc: str) -> dict:
+    """Parse 'Args:' section in docstrings to extract parameter descriptions."""
+    if not doc or "Args:" not in doc:
+        return {}
+    descriptions = {}
+    in_args = False
+    current_param = None
+    current_desc = []
+
+    for line in doc.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("Args:"):
+            in_args = True
+            continue
+        elif stripped.startswith(("Returns:", "Raises:", "Example:", "Note:")):
+            in_args = False
+            if current_param:
+                descriptions[current_param] = " ".join(current_desc).strip()
+            current_param = None
+            continue
+
+        if in_args:
+            match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\([^)]*\))?\s*:\s*(.*)$", stripped)
+            if match:
+                if current_param:
+                    descriptions[current_param] = " ".join(current_desc).strip()
+                current_param = match.group(1)
+                current_desc = [match.group(2)]
+            elif current_param and stripped:
+                current_desc.append(stripped)
+
+    if current_param:
+        descriptions[current_param] = " ".join(current_desc).strip()
+    return descriptions
+
+
 def _openai_tools():
-    """Build the OpenAI-compatible tool schema without another dependency."""
+    """Build the OpenAI-compatible tool schema with rich parameter descriptions."""
     result = []
     for function in TOOLS:
         signature = inspect.signature(function)
-        properties = {
-            name: _json_type(parameter.annotation)
-            for name, parameter in signature.parameters.items()
-        }
+        doc = inspect.getdoc(function) or ""
+        param_docs = _parse_docstring_args(doc)
+        properties = {}
+        for name, parameter in signature.parameters.items():
+            prop = _json_type(parameter.annotation)
+            if name in param_docs:
+                prop["description"] = param_docs[name]
+            properties[name] = prop
         required = [
             name for name, parameter in signature.parameters.items()
             if parameter.default is inspect.Parameter.empty
@@ -93,11 +142,13 @@ def _openai_tools():
         parameters = {"type": "object", "properties": properties}
         if required:
             parameters["required"] = required
+        
+        main_desc = doc.split("\n\n")[0] if "\n\n" in doc else (doc or function.__name__)
         result.append({
             "type": "function",
             "function": {
                 "name": function.__name__,
-                "description": inspect.getdoc(function) or function.__name__,
+                "description": main_desc.replace("\n", " ").strip(),
                 "parameters": parameters,
             },
         })
@@ -145,7 +196,8 @@ class AIAssistant:
         try:
             cfg = current_app.config
             self.provider      = cfg.get('AI_PROVIDER', 'ollama').lower()
-            self.model         = cfg.get('AI_LLM_MODEL', 'qwen3:8b')
+            default_model = 'llama-3.3-70b-versatile' if self.provider == 'groq' else 'qwen3:8b'
+            self.model         = cfg.get('AI_LLM_MODEL') or default_model
             self.ollama_host   = cfg.get('AI_OLLAMA_HOST', 'http://localhost:11434')
             self.groq_base_url = cfg.get('AI_GROQ_BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
             self.groq_api_key  = cfg.get('GROQ_API_KEY', '')
@@ -245,6 +297,22 @@ class AIAssistant:
 
         try:
             result = self._react_loop(messages)
+        except AIRateLimitError as exc:
+            log.warning(f"[AI] Rate limited during chat: {exc}")
+            pause_sec = int(round(exc.retry_after)) or 4
+            text = f"⏳ Taking a brief pause to process smoothly. Resuming automatically in {pause_sec}s..."
+            self._save_message(session_id, user_id, "assistant", text, lang)
+            return {
+                "text": text,
+                "action": "pause_and_continue",
+                "pause_seconds": pause_sec,
+                "is_rate_limited": True,
+                "can_continue": True,
+                "guidance": "Groq free-tier rate limit active. The assistant will pause and continue automatically.",
+                "language": lang,
+                "tool_calls": [],
+                "error": "rate_limited"
+            }
         except (_OllamaResponseError, AIProviderError) as exc:
             log.error(f"[AI] Provider response error: {exc}")
             error_text = self._provider_error_reply(str(exc), lang)
@@ -376,38 +444,67 @@ class AIAssistant:
             )
             return response.message
 
-        try:
-            response = requests.post(
-                f'{self.groq_base_url}/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {self.groq_api_key}',
-                    'Content-Type': 'application/json',
-                },
-                json={
-                    'model': self.model,
-                    'messages': messages,
-                    'tools': _openai_tools(),
-                    'tool_choice': 'auto',
-                    'temperature': 0.2,
-                    'max_tokens': 1024,
-                },
-                timeout=(5, 45),
-            )
-        except requests.RequestException as exc:
-            raise AIProviderError('The hosted AI service could not be reached.') from exc
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    f'{self.groq_base_url}/chat/completions',
+                    headers={
+                        'Authorization': f'Bearer {self.groq_api_key}',
+                        'Content-Type': 'application/json',
+                    },
+                    json={
+                        'model': self.model,
+                        'messages': messages,
+                        'tools': _openai_tools(),
+                        'tool_choice': 'auto',
+                        'temperature': 0.2,
+                        'max_tokens': 1024,
+                    },
+                    timeout=(5, 45),
+                )
+            except requests.RequestException as exc:
+                raise AIProviderError('The hosted AI service could not be reached.') from exc
 
-        if not response.ok:
-            if response.status_code == 401:
-                raise AIProviderError('The hosted AI key is invalid or missing.')
-            if response.status_code == 429:
-                raise AIProviderError('The hosted AI free-tier limit has been reached. Please try later.')
-            raise AIProviderError('The hosted AI service is temporarily unavailable.')
+            status_code = getattr(response, 'status_code', 200 if getattr(response, 'ok', False) else 500)
+            if status_code == 429:
+                headers = getattr(response, 'headers', {}) or {}
+                retry_header = headers.get('Retry-After') if hasattr(headers, 'get') else None
+                pause_time = 4.0
+                if retry_header:
+                    try:
+                        pause_time = float(retry_header)
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    try:
+                        if callable(getattr(response, 'json', None)):
+                            body_err = response.json().get('error', {}).get('message', '')
+                            m = re.search(r"try again in (\d+(?:\.\d+)?)s", body_err)
+                            if m:
+                                pause_time = float(m.group(1))
+                    except Exception:
+                        pass
 
-        try:
-            message = response.json()['choices'][0]['message']
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise AIProviderError('The hosted AI returned an invalid response.') from exc
-        return message
+                if attempt == 0 and pause_time <= 4.0:
+                    log.warning(f"[AI] Groq rate limit hit. Pausing {pause_time}s before automatic retry...")
+                    time.sleep(pause_time)
+                    continue
+
+                raise AIRateLimitError(
+                    retry_after=pause_time,
+                    message="Groq free tier rate limit reached. Taking a brief cooldown pause."
+                )
+
+            if not getattr(response, 'ok', False):
+                if status_code == 401:
+                    raise AIProviderError('The hosted AI key is invalid or missing.')
+                raise AIProviderError('The hosted AI service is temporarily unavailable.')
+
+            try:
+                message = response.json()['choices'][0]['message']
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise AIProviderError('The hosted AI returned an invalid response.') from exc
+            return message
 
     def _tool_calls(self, message):
         return message.get('tool_calls', []) if self.provider == 'groq' else getattr(message, 'tool_calls', [])
@@ -491,13 +588,15 @@ class AIAssistant:
         """Return a friendly provider-neutral error based on detected language."""
         if "connection refused" in error.lower() or "could not be reached" in error.lower():
             msgs = {
-                "hi": "माफ़ करें, AI सर्वर (Ollama) चालू नहीं है। कृपया Ollama शुरू करें।",
-                "gu": "માફ કરો, AI સર્વર (Ollama) ચાલુ નથી. Ollama ચાલુ કરો.",
-                "romanized_hi": "Maaf karo, AI server (Ollama) chal nahi raha. Please Ollama start karo.",
-                "romanized_gu": "Maaf karjo, AI server (Ollama) chalu nathi. Ollama start karo.",
+                "hi": "माफ़ करें, AI सर्वर चालू नहीं है। कृपया Ollama या Groq सेवा जांचें।",
+                "gu": "માફ કરો, AI સર્વર ચાલુ નથી. Ollama અથવા Groq સેવા તપાસો.",
+                "romanized_hi": "Maaf karo, AI server chal nahi raha. Please Ollama ya Groq service check karo.",
+                "romanized_gu": "Maaf karjo, AI server chalu nathi. Ollama athva Groq service check karo.",
             }
-            return msgs.get(lang, "⚠️ The AI service is offline. Please try again shortly.")
-        return "⚠️ The AI service is unavailable. Please try again shortly."
+            return msgs.get(lang, "⚠️ The AI service is currently offline. Please check connection.")
+        if "limit has been reached" in error.lower() or "rate limit" in error.lower():
+            return "⏳ Free-tier rate limit reached. Taking a brief pause to cooldown..."
+        return "⚠️ The AI service is temporarily unavailable. Loading state will resume once connected."
 
     @staticmethod
     def _generic_error_reply(lang: str) -> str:
