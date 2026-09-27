@@ -26,13 +26,19 @@
     // DOM Elements
     let launcher, chatWindow, closeBtn, minimizeBtn, newChatBtn, historyBtn, historyCloseBtn, historyPanel, historyList, messagesContainer, chatInput, sendBtn, micBtn, suggestionsContainer, statusDot, statusText, statusBadge;
 
-    document.addEventListener('DOMContentLoaded', () => {
+    function init() {
         initElements();
         initializeSessions();
         checkHealth();
         bindEvents();
         loadHistory();
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 
     function initElements() {
         launcher = document.getElementById('ai-chat-launcher');
@@ -322,10 +328,11 @@
         }
     }
 
-    function toggleChatWindow() {
+    function toggleChatWindow(forceOpen) {
         if (!chatWindow) return;
         const isHidden = chatWindow.classList.contains('hidden');
-        if (isHidden) {
+        const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : isHidden;
+        if (shouldOpen) {
             chatWindow.classList.remove('hidden');
             if (launcher) launcher.setAttribute('aria-expanded', 'true');
             if (chatInput) chatInput.focus();
@@ -334,6 +341,10 @@
             if (launcher) launcher.setAttribute('aria-expanded', 'false');
         }
     }
+
+    // Expose helpers on window for external lazy-loaders / triggers
+    window.toggleAiChat = toggleChatWindow;
+    window.openAiChat = (force) => toggleChatWindow(typeof force === 'boolean' ? force : true);
 
     async function loadHistory() {
         try {
