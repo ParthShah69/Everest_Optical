@@ -37,6 +37,8 @@ from models.prescription import Prescription
 from models.inventory import Inventory
 from models.user import User
 from models.sequence import get_next_number
+from models.payment import Payment
+from models.tax_config import TaxConfig
 
 log = logging.getLogger(__name__)
 
@@ -512,6 +514,17 @@ def create_order(
                 quantity=itm["qty"],
                 unit_price=itm["price"],
                 inventory_id=itm['inventory_id'],
+            ))
+
+        if advance_dec > 0:
+            db.session.add(Payment(
+                order_id=new_order.id,
+                receipt_no=get_next_number('RCP'),
+                amount=advance_dec,
+                payment_method='Cash',
+                remark='Initial advance payment',
+                payment_type='advance',
+                created_by=_safe_user_id(),
             ))
 
         # Keep the delivery stock-out rule identical to the order form.  A
@@ -1270,6 +1283,341 @@ def create_user(username: str, password: str, role: str = "staff", email: str = 
         return _err(str(exc))
 
 
+
+
+# ===========================================================================
+# TOOL 14 — record_payment
+# ===========================================================================
+
+def record_payment(
+    order_id: int = None,
+    order_no: str = None,
+    amount: float = 0.0,
+    payment_method: str = "Cash",
+    remark: str = None,
+    payment_type: str = "partial",
+) -> str:
+    """
+    Record a customer payment (Cash, UPI, Card, Paytm, Bank) against an order.
+    Issues a sequential receipt number (RCP-XXXX) and recalculates the balance.
+
+    Args:
+        order_id: Exact numeric order ID (optional if order_no provided)
+        order_no: Exact order number, for example 'ORD-0001' (optional if order_id provided)
+        amount: Payment amount in Rupees (must be positive number)
+        payment_method: Payment method: 'Cash', 'UPI', 'Card', 'Paytm', or 'Bank' (default 'Cash')
+        remark: Optional transaction note or payment reference ID
+        payment_type: Payment classification: 'advance', 'partial', or 'final' (default 'partial')
+
+    Returns:
+        JSON with receipt number, amount paid, updated remaining due, and receipt link
+    """
+    _require_app_context()
+    if order_id is None and not (order_no or "").strip():
+        return _err("Provide an order_id or order_no to record a payment.")
+
+    try:
+        amt = float(amount or 0.0)
+        if amt <= 0:
+            return _err("Payment amount must be greater than zero.")
+
+        order = None
+        if order_id is not None:
+            order = db.session.get(Order, int(order_id))
+        if order is None and (order_no or "").strip():
+            order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
+
+        if not order:
+            return _err(f"Order '{order_id or order_no}' was not found.")
+
+        rem_due = float(order.remaining_due or 0.0)
+        if amt > rem_due + 0.01:
+            return _err(
+                f"Payment amount of ₹{amt:.2f} exceeds the remaining balance of ₹{rem_due:.2f}."
+            )
+
+        valid_methods = {"Cash", "UPI", "Card", "Paytm", "Bank"}
+        method_norm = payment_method.strip() if payment_method else "Cash"
+        for vm in valid_methods:
+            if vm.lower() == method_norm.lower():
+                method_norm = vm
+                break
+
+        receipt_number = get_next_number('RCP')
+        user_id = None
+        try:
+            if current_user and current_user.is_authenticated:
+                user_id = current_user.id
+        except Exception:
+            user_id = None
+
+        payment = Payment(
+            order_id=order.id,
+            receipt_no=receipt_number,
+            amount=Decimal(str(amt)),
+            payment_method=method_norm,
+            remark=(remark or "").strip() or None,
+            payment_type=payment_type if payment_type in {"advance", "partial", "final"} else "partial",
+            created_by=user_id,
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        new_due = float(order.remaining_due or 0.0)
+        return _ok({
+            "message": f"Payment of ₹{amt:.2f} recorded successfully via {method_norm} for order {order.order_no}.",
+            "receipt_no": receipt_number,
+            "order_no": order.order_no,
+            "order_id": order.id,
+            "amount_paid": amt,
+            "remaining_due": new_due,
+            "payment_method": method_norm,
+            "navigate_to": f"/payments/receipt/{receipt_number}",
+        })
+    except Exception as exc:
+        db.session.rollback()
+        log.exception("[Tool:record_payment]")
+        return _err(str(exc))
+
+
+# ===========================================================================
+# TOOL 15 — get_prescriptions
+# ===========================================================================
+
+def get_prescriptions(
+    customer_id: int = None,
+    prescription_id: int = None,
+    limit: int = 5,
+) -> str:
+    """
+    Look up clinical optical prescriptions and refraction values for a customer.
+    Returns complete power measurements (RE/LE SPH, CYL, AXIS, VA, Addition, PD, Doctor, Notes).
+
+    Args:
+        customer_id: Customer numeric ID to view their prescription history (optional)
+        prescription_id: Specific prescription record ID (optional)
+        limit: Maximum number of prescriptions to return (default 5, max 20)
+
+    Returns:
+        JSON with detailed ophthalmic parameters for each prescription
+    """
+    _require_app_context()
+    if customer_id is None and prescription_id is None:
+        return _err("Provide either customer_id or prescription_id to view prescriptions.")
+
+    try:
+        limit = max(1, min(int(limit or 5), 20))
+        prescriptions = []
+
+        if prescription_id is not None:
+            p = db.session.get(Prescription, int(prescription_id))
+            if p:
+                prescriptions.append(p)
+            else:
+                return _err(f"Prescription with ID {prescription_id} not found.")
+        elif customer_id is not None:
+            c = db.session.get(Customer, int(customer_id))
+            if not c:
+                return _err(f"Customer with ID {customer_id} not found.")
+            prescriptions = (
+                Prescription.query.filter_by(customer_id=c.id)
+                .order_by(Prescription.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+        if not prescriptions:
+            return _ok({"prescriptions": [], "count": 0, "message": "No prescriptions found."})
+
+        results = []
+        for p in prescriptions:
+            rx_date = str(p.created_at.date()) if p.created_at else None
+            results.append({
+                "id": p.id,
+                "customer_id": p.customer_id,
+                "customer_name": p.customer.name if p.customer else None,
+                "prescription_date": rx_date,
+                "doctor_name": getattr(p, 'referred_by', None) or "N/A",
+                "right_eye": {
+                    "sph": float(p.re_sph or 0),
+                    "cyl": float(p.re_cyl or 0),
+                    "axis": p.re_axis or 0,
+                    "va": getattr(p, 're_visual_acuity', "") or "",
+                    "addition": float(p.addition or 0) if getattr(p, 'addition', None) is not None else None,
+                },
+                "left_eye": {
+                    "sph": float(p.le_sph or 0),
+                    "cyl": float(p.le_cyl or 0),
+                    "axis": p.le_axis or 0,
+                    "va": getattr(p, 'le_visual_acuity', "") or "",
+                    "addition": float(p.addition or 0) if getattr(p, 'addition', None) is not None else None,
+                },
+                "pd": float(p.pd_total or 0) if getattr(p, 'pd_total', None) is not None else None,
+                "notes": p.notes or "",
+                "navigate_to": f"/prescriptions/history/{p.customer_id}",
+            })
+
+        first_cid = prescriptions[0].customer_id
+        return _ok({
+            "prescriptions": results,
+            "count": len(results),
+            "navigate_to": f"/prescriptions/history/{first_cid}",
+        })
+    except Exception as exc:
+        log.exception("[Tool:get_prescriptions]")
+        return _err(str(exc))
+
+
+# ===========================================================================
+# TOOL 16 — get_tax_rates
+# ===========================================================================
+
+def get_tax_rates(active_only: bool = True) -> str:
+    """
+    Get configured GST tax rates and default tax configuration for billing.
+    Useful to verify tax percentage when customer asks for GST invoice.
+
+    Args:
+        active_only: If true, return only currently active tax rates (default True)
+
+    Returns:
+        JSON list of configured tax rates and the default GST slab
+    """
+    _require_app_context()
+    try:
+        q = TaxConfig.query
+        if active_only:
+            q = q.filter_by(is_active=True)
+        rates = q.order_by(TaxConfig.is_default.desc(), TaxConfig.rate.asc()).all()
+
+        results = [
+            {
+                "id": r.id,
+                "name": r.name,
+                "rate_percent": float(r.rate),
+                "is_default": r.is_default,
+                "is_active": r.is_active,
+            }
+            for r in rates
+        ]
+        default_rate = next((r["rate_percent"] for r in results if r["is_default"]), 0.0)
+        return _ok({
+            "tax_rates": results,
+            "default_rate_percent": default_rate,
+            "count": len(results),
+            "navigate_to": "/taxes/",
+        })
+    except Exception as exc:
+        log.exception("[Tool:get_tax_rates]")
+        return _err(str(exc))
+
+
+# ===========================================================================
+# TOOL 17 — get_low_stock_inventory
+# ===========================================================================
+
+def get_low_stock_inventory(threshold: int = 5, limit: int = 15) -> str:
+    """
+    List inventory frames, lenses, and optical goods that are running low on stock.
+    Helps staff quickly reorder items before they run out.
+
+    Args:
+        threshold: Maximum quantity to consider low stock (default 5)
+        limit: Maximum number of low stock items to return (default 15)
+
+    Returns:
+        JSON list of low stock items sorted by lowest quantity first
+    """
+    _require_app_context()
+    try:
+        th = max(0, int(threshold or 5))
+        lim = max(1, min(int(limit or 15), 50))
+        items = (
+            Inventory.query
+            .filter(Inventory.quantity <= th)
+            .order_by(Inventory.quantity.asc(), Inventory.model_name.asc())
+            .limit(lim)
+            .all()
+        )
+        results = [
+            {
+                "id": i.id,
+                "model_name": i.model_name,
+                "brand": i.brand or "N/A",
+                "quantity": i.quantity,
+                "location": i.location or "N/A",
+                "cost_price": float(i.cost_price or 0),
+                "selling_price": float(i.selling_price or 0),
+                "navigate_to": f"/inventory/edit/{i.id}",
+            }
+            for i in items
+        ]
+        return _ok({
+            "low_stock_items": results,
+            "threshold": th,
+            "count": len(results),
+            "navigate_to": "/inventory/",
+        })
+    except Exception as exc:
+        log.exception("[Tool:get_low_stock_inventory]")
+        return _err(str(exc))
+
+
+# ===========================================================================
+# TOOL 18 — get_order_document_links
+# ===========================================================================
+
+def get_order_document_links(order_id: int = None, order_no: str = None) -> str:
+    """
+    Get printable and viewable links for an order: Printable Tax Invoice,
+    Workshop Job Slip, and Payment Receipts.
+
+    Args:
+        order_id: Exact numeric order ID (optional if order_no provided)
+        order_no: Exact order number, for example 'ORD-0001' (optional if order_id provided)
+
+    Returns:
+        JSON with printable URLs for Invoice, Workshop Slip, and Payment Receipts
+    """
+    _require_app_context()
+    if order_id is None and not (order_no or "").strip():
+        return _err("Provide an order_id or order_no to get document links.")
+
+    try:
+        order = None
+        if order_id is not None:
+            order = db.session.get(Order, int(order_id))
+        if order is None and (order_no or "").strip():
+            order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
+
+        if not order:
+            return _err("Order was not found.")
+
+        receipts = [
+            {
+                "receipt_no": p.receipt_no,
+                "amount": float(p.amount),
+                "url": f"/payments/receipt/{p.receipt_no}" if p.receipt_no else None,
+            }
+            for p in (order.payments or [])
+            if p.receipt_no
+        ]
+
+        return _ok({
+            "order_id": order.id,
+            "order_no": order.order_no,
+            "customer_name": order.customer.name if order.customer else None,
+            "printable_invoice": f"/orders/invoice/{order.id}",
+            "workshop_slip": f"/orders/workshop/{order.id}",
+            "order_details": f"/orders/{order.id}",
+            "receipts": receipts,
+            "navigate_to": f"/orders/invoice/{order.id}",
+        })
+    except Exception as exc:
+        log.exception("[Tool:get_order_document_links]")
+        return _err(str(exc))
+
+
 # ===========================================================================
 # TOOL 14 — navigate_to_page
 # ===========================================================================
@@ -1284,6 +1632,10 @@ _NAV_MAP = {
     "new_order":          "/orders/new/{id}",
     "view_order":         "/orders/{id}",
     "edit_order":         "/orders/edit/{id}",
+    "invoice":            "/orders/invoice/{id}",
+    "workshop":           "/orders/workshop/{id}",
+    "receipt":            "/payments/receipt/{id}",
+    "taxes":              "/taxes/",
     "inventory":          "/inventory/",
     "add_inventory":      "/inventory/add",
     "edit_inventory":     "/inventory/edit/{id}",
@@ -1342,7 +1694,12 @@ TOOLS = [
     search_orders,
     get_order_details,
     update_order_status,
+    record_payment,
     add_prescription,
+    get_prescriptions,
+    get_tax_rates,
+    get_low_stock_inventory,
+    get_order_document_links,
     search_inventory,
     add_inventory_item,
     update_inventory_stock,
