@@ -80,7 +80,8 @@ def approve(id):
         elif req.entity_type == 'order':
             order = Order.query.get(req.entity_id)
             if order:
-                db.session.delete(order) # OrderItems deleted via cascade
+                from services.order_deletion import delete_order_records
+                delete_order_records(order)
         elif req.entity_type == 'prescription':
             prescription = Prescription.query.get(req.entity_id)
             if prescription:

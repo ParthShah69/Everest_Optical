@@ -374,9 +374,8 @@ def delete(id):
     
     if current_user.is_admin:
         try:
-            if order.status == 'Delivered':
-                _restore_stock(order)
-            db.session.delete(order)
+            from services.order_deletion import delete_order_records
+            delete_order_records(order)
             db.session.commit()
             flash(f'Order #{order.order_no} deleted permanently.', 'success')
         except Exception as e:
