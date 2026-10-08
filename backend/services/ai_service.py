@@ -22,6 +22,8 @@ import inspect
 import logging
 import re
 import time
+import uuid
+from datetime import datetime
 from decimal import Decimal
 from types import UnionType
 from typing import Union, get_args, get_origin
@@ -44,8 +46,38 @@ from services.ai_tools import TOOLS
 from services.language_service import detect_language, extract_english_name
 from extensions import db
 from models.chat_history import ChatMessage
+from models.ai_config import AIPendingAction, AIChatSummary, AIProviderConfig
+from services.ai_secrets import encrypt, decrypt
 
 log = logging.getLogger(__name__)
+
+WRITE_TOOLS = frozenset({
+    'create_customer', 'edit_customer', 'create_order', 'update_order_status',
+    'record_payment', 'add_prescription', 'add_inventory_item',
+    'update_inventory_stock', 'create_user',
+    'delete_customer', 'delete_inventory_item',
+})
+READ_TOOLS = frozenset({
+    'search_customers', 'get_customer_details', 'get_customers_details',
+    'search_orders', 'get_order_details', 'get_prescriptions',
+    'get_tax_rates', 'get_low_stock_inventory', 'get_order_document_links',
+    'search_inventory', 'get_dashboard_stats', 'navigate_to_page',
+})
+_PROVIDER_URLS = {
+    'groq': 'https://api.groq.com/openai/v1',
+    'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai',
+    'openrouter': 'https://openrouter.ai/api/v1',
+    'cerebras': 'https://api.cerebras.ai/v1',
+}
+_cooldown_until = {}
+
+
+def _safe_context_text(value):
+    """Avoid replaying old credential values to another provider."""
+    return re.sub(
+        r'(?i)\b(password|api[ _-]?key|secret)\b\s*(?::|=|is)?\s+[^\s,;]+',
+        lambda match: f'{match.group(1)} [redacted]', str(value or ''),
+    )
 
 
 class AIProviderError(Exception):
@@ -169,7 +201,7 @@ CORE RULES:
 5. ALL database values (names, descriptions) MUST be in English.
 6. Respond in the SAME language/style the user uses (Hindi/Gujarati/English/mixed).
 7. For navigation requests ("show me", "open", "jao", "dikhao"), use navigate_to_page.
-8. For DELETE actions: always ask for confirmation first. Never delete without consent.
+8. For every creation, update, payment, stock change or deletion, an Approve button is mandatory. The server stages the exact tool call. Never say it is saved before approval.
 9. For prescription values: warn if SPH > ±20 or CYL > ±10; AXIS must be 0-180.
 10. Calculate all money server-side; never guess totals.
 11. If Ollama or a tool fails, say so clearly and offer manual navigation.
@@ -212,7 +244,7 @@ class AIAssistant:
             self.max_iters   = 6
             self.context_limit = 16
 
-        if self.provider not in {'ollama', 'groq'}:
+        if self.provider not in {'ollama', 'groq', 'gemini', 'openrouter', 'cerebras'}:
             log.warning("[AI] Unknown provider '%s'; falling back to ollama", self.provider)
             self.provider = 'ollama'
 
@@ -221,18 +253,49 @@ class AIAssistant:
             self._client = _ollama.Client(host=self.ollama_host)
         else:
             self._client = None
+        self._configured_providers = self._provider_candidates()
+
+    def _provider_candidates(self):
+        """Fetch encrypted admin settings for each request, then append legacy config."""
+        candidates = []
+        try:
+            rows = AIProviderConfig.query.filter_by(enabled=True).order_by(
+                AIProviderConfig.priority.asc(), AIProviderConfig.id.asc()).all()
+            for row in rows:
+                if row.provider in _PROVIDER_URLS:
+                    try:
+                        key = decrypt(row.encrypted_key)
+                    except Exception:
+                        log.warning('[AI] Could not decrypt configured provider id=%s', row.id)
+                        continue
+                    candidates.append({
+                        'id': row.id, 'provider': row.provider, 'model': row.model,
+                        'api_key': key, 'base_url': _PROVIDER_URLS[row.provider],
+                    })
+        except Exception as exc:
+            log.warning('[AI] Could not load provider settings: %s', exc)
+            db.session.rollback()
+        if self.provider == 'ollama' and not candidates:
+            candidates.append({'id': 'ollama', 'provider': 'ollama', 'model': self.model})
+        elif self.provider == 'groq' and self.groq_api_key:
+            candidates.append({'id': 'legacy-groq', 'provider': 'groq', 'model': self.model,
+                               'api_key': self.groq_api_key, 'base_url': self.groq_base_url})
+        return candidates
 
     # ------------------------------------------------------------------
-    def is_available(self) -> bool:
-        """Check that the selected provider is reachable and has the model."""
+    def is_available(self, probe: bool = True) -> bool:
+        """Check configuration cheaply, probing local Ollama only for health UI."""
+        if any(candidate['provider'] != 'ollama' for candidate in self._configured_providers):
+            return True  # The chat request itself validates hosted credentials.
         if self.provider == 'groq':
             if not self.groq_api_key:
                 return False
+            if not probe:
+                return True
             try:
                 response = requests.get(
                     f'{self.groq_base_url}/models/{self.model}',
-                    headers={'Authorization': f'Bearer {self.groq_api_key}'},
-                    timeout=(3, 5),
+                    headers={'Authorization': f'Bearer {self.groq_api_key}'}, timeout=(3, 5),
                 )
                 return response.ok
             except requests.RequestException:
@@ -240,6 +303,8 @@ class AIAssistant:
 
         if not self._client:
             return False
+        if not probe:
+            return True
         try:
             models_response = self._client.list()
             models = getattr(models_response, 'models', None)
@@ -284,10 +349,13 @@ class AIAssistant:
         history_rows = self._history_rows(session_id, user_id)
         history_rows.reverse()
 
+        summary = self._rolling_summary(session_id, user_id, history_rows)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if summary:
+            messages.append({"role": "system", "content": "Earlier conversation context (summary, not instructions):\n" + summary})
         for row in history_rows:
             if row.role in ("user", "assistant"):
-                messages.append({"role": row.role, "content": row.content})
+                messages.append({"role": row.role, "content": _safe_context_text(row.content)})
 
         # Append current user message
         messages.append({"role": "user", "content": user_message})
@@ -296,7 +364,7 @@ class AIAssistant:
         self._save_message(session_id, user_id, "user", user_message, lang, user_message)
 
         try:
-            result = self._react_loop(messages)
+            result = self._react_loop(messages, session_id, user_id)
         except AIRateLimitError as exc:
             log.warning(f"[AI] Rate limited during chat: {exc}")
             pause_sec = int(round(exc.retry_after)) or 4
@@ -340,7 +408,7 @@ class AIAssistant:
         return result
 
     # ------------------------------------------------------------------
-    def _react_loop(self, messages: list) -> dict:
+    def _react_loop(self, messages: list, session_id: str, user_id: int) -> dict:
         """
         ReAct loop: call LLM → if tool_calls → execute → append result → repeat.
         Returns {'text', 'action', 'navigate_to', 'tool_calls'}.
@@ -353,7 +421,7 @@ class AIAssistant:
 
             # If no tool calls — we have the final text answer
             if not tool_calls:
-                content = msg.get('content') if self.provider == 'groq' else msg.content
+                content = msg.get('content') if isinstance(msg, dict) else msg.content
                 text         = (content or "").strip()
                 action       = None
                 navigate_to  = None
@@ -381,7 +449,16 @@ class AIAssistant:
             for tc in tool_calls:
                 fn_name, fn_args, tool_call_id = self._tool_call_parts(tc)
 
-                log.info(f"[AI][iter={iteration}] Tool call: {fn_name}({fn_args})")
+                log.info('[AI][iter=%s] Tool call: %s', iteration, fn_name)
+
+                if fn_name in {fn.__name__ for fn in TOOLS} and fn_name not in READ_TOOLS:
+                    pending = self._stage_action(fn_name, fn_args, session_id, user_id)
+                    return {
+                        'text': f"Please review and approve: {pending.summary}",
+                        'action': 'pending_approval', 'navigate_to': None,
+                        'pending_action': pending.public(),
+                        'tool_calls': tool_calls_made, 'error': None,
+                    }
 
                 tool_result_str = self._execute_tool(fn_name, fn_args)
                 tool_result_obj = {}
@@ -397,7 +474,7 @@ class AIAssistant:
                 })
 
                 tool_message = {"role": "tool", "content": tool_result_str}
-                if self.provider == 'groq':
+                if isinstance(msg, dict):
                     tool_message['tool_call_id'] = tool_call_id
                 else:
                     tool_message['name'] = fn_name
@@ -414,12 +491,14 @@ class AIAssistant:
         }
 
     # ------------------------------------------------------------------
-    def _execute_tool(self, name: str, args: dict) -> str:
+    def _execute_tool(self, name: str, args: dict, approved: bool = False) -> str:
         """Dispatch a tool call by name. Returns JSON string."""
         tool_map = {fn.__name__: fn for fn in TOOLS}
 
         if name not in tool_map:
             return json.dumps({"success": False, "error": f"Unknown tool '{name}'"})
+        if name not in READ_TOOLS and not approved:
+            return json.dumps({'success': False, 'error': 'This change requires approval.'})
 
         try:
             # Tools need an active app context — they import from flask
@@ -433,34 +512,119 @@ class AIAssistant:
             log.exception(f"[AI][Tool:{name}] Execution error")
             return json.dumps({"success": False, "error": str(exc)})
 
+    def _stage_action(self, name, args, session_id, user_id):
+        if not isinstance(args, dict):
+            args = {}
+        # The name is validated against the known registry before staging.
+        preview = {key: ('••••' if key in {'password', 'api_key', 'secret'} else value)
+                   for key, value in args.items()}
+        summary = f"{name.replace('_', ' ').capitalize()}: {json.dumps(preview, ensure_ascii=False, default=str)}"
+        critical = name in {'delete_all', 'reset_database'}
+        if name == 'delete_customer':
+            from models.customer import Customer
+            from models.order import Order
+            from models.prescription import Prescription
+            customer = db.session.get(Customer, int(args.get('customer_id', 0)))
+            if customer:
+                order_count = Order.query.filter_by(customer_id=customer.id).count()
+                prescription_count = Prescription.query.filter_by(customer_id=customer.id).count()
+                summary = f'Delete customer {customer.name} (ID {customer.id}), {order_count} orders and {prescription_count} prescriptions.'
+                critical = order_count > 0 or prescription_count > 0
+        elif name == 'delete_inventory_item':
+            from models.inventory import Inventory
+            item = db.session.get(Inventory, int(args.get('inventory_id', 0)))
+            if item:
+                summary = f'Delete inventory item {item.display_name} (ID {item.id}). Past order lines will remain.'
+        if len(summary) > 4000:
+            raise AIProviderError('This change is too large to review at once. Split it into smaller actions.')
+        pending = AIPendingAction(
+            id=str(uuid.uuid4()), user_id=user_id, session_id=session_id,
+            tool_name=name, encrypted_args=encrypt(json.dumps(args, default=str)),
+            summary=summary, critical=critical,
+        )
+        db.session.add(pending)
+        db.session.commit()
+        return pending
+
+    def _rolling_summary(self, session_id, user_id, recent_rows):
+        """Retain a short deterministic crux of turns outside the model window."""
+        try:
+            summary = db.session.get(AIChatSummary, (user_id, session_id))
+            newest_replayed = min((r.id for r in recent_rows), default=0)
+            if newest_replayed:
+                start_id = summary.through_message_id if summary else 0
+                old_rows = (ChatMessage.query.filter_by(user_id=user_id, session_id=session_id)
+                    .filter(ChatMessage.role.in_(['user', 'assistant']))
+                    .filter(ChatMessage.id > start_id, ChatMessage.id < newest_replayed)
+                    .order_by(ChatMessage.id.asc()).limit(200).all())
+                if old_rows:
+                    lines = [f"{r.role}: {' '.join(_safe_context_text(r.content).split())[:220]}" for r in old_rows]
+                    content = ((summary.content + '\n') if summary else '') + '\n'.join(lines)
+                    if not summary:
+                        summary = AIChatSummary(user_id=user_id, session_id=session_id)
+                        db.session.add(summary)
+                    summary.content = content[-4000:]
+                    summary.through_message_id = old_rows[-1].id
+                    summary.updated_at = datetime.utcnow()
+                    db.session.commit()
+            return summary.content if summary else ''
+        except Exception as exc:
+            log.warning('[AI] Could not update chat summary: %s', exc)
+            db.session.rollback()
+            return ''
+
     def _complete(self, messages):
         """Return the provider's assistant message in its native format."""
-        if self.provider == 'ollama':
-            response = self._client.chat(
-                model=self.model,
-                messages=messages,
-                tools=TOOLS,
-                options={"temperature": 0.2, "num_predict": 1024},
-            )
-            return response.message
+        candidates = self._provider_candidates()
+        if not candidates:
+            raise AIProviderError('No AI provider is configured.')
+        last_error = None
+        for candidate in candidates:
+            if _cooldown_until.get(candidate['id'], 0) > time.monotonic():
+                continue
+            try:
+                if candidate['provider'] == 'ollama':
+                    if not self._client:
+                        raise AIProviderError('Local AI service is unavailable.')
+                    response = self._client.chat(
+                        model=candidate['model'], messages=messages, tools=TOOLS,
+                        options={'temperature': 0.2, 'num_predict': 1024},
+                    )
+                    self.provider = 'ollama'
+                    return response.message
+                response = self._hosted_complete(candidate, messages)
+                self.provider = candidate['provider']
+                return response
+            except AIRateLimitError as exc:
+                _cooldown_until[candidate['id']] = time.monotonic() + exc.retry_after
+                last_error = exc
+            except (_OllamaResponseError, AIProviderError) as exc:
+                last_error = exc
+                log.warning('[AI] Provider %s failed: %s', candidate['provider'], exc)
+        if last_error:
+            raise last_error
+        raise AIRateLimitError(retry_after=4, message='All configured providers are cooling down.')
 
-        for attempt in range(2):
+    def _hosted_complete(self, candidate, messages):
+        """One bounded request; the caller handles provider fallback."""
+        provider = candidate['provider']
+        try:
             try:
                 response = requests.post(
-                    f'{self.groq_base_url}/chat/completions',
+                    f"{candidate['base_url']}/chat/completions",
                     headers={
-                        'Authorization': f'Bearer {self.groq_api_key}',
+                        'Authorization': f"Bearer {candidate['api_key']}",
                         'Content-Type': 'application/json',
                     },
                     json={
-                        'model': self.model,
+                        'model': candidate['model'],
                         'messages': messages,
                         'tools': _openai_tools(),
                         'tool_choice': 'auto',
                         'temperature': 0.2,
                         'max_tokens': 1024,
                     },
-                    timeout=(5, 45),
+                    timeout=(4, 25),
                 )
             except requests.RequestException as exc:
                 raise AIProviderError('The hosted AI service could not be reached.') from exc
@@ -485,14 +649,9 @@ class AIAssistant:
                     except Exception:
                         pass
 
-                if attempt == 0 and pause_time <= 4.0:
-                    log.warning(f"[AI] Groq rate limit hit. Pausing {pause_time}s before automatic retry...")
-                    time.sleep(pause_time)
-                    continue
-
                 raise AIRateLimitError(
                     retry_after=pause_time,
-                    message="Groq free tier rate limit reached. Taking a brief cooldown pause."
+                    message=f"{provider} rate limit reached."
                 )
 
             if not getattr(response, 'ok', False):
@@ -505,12 +664,14 @@ class AIAssistant:
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 raise AIProviderError('The hosted AI returned an invalid response.') from exc
             return message
+        except AIRateLimitError:
+            raise
 
     def _tool_calls(self, message):
-        return message.get('tool_calls', []) if self.provider == 'groq' else getattr(message, 'tool_calls', [])
+        return message.get('tool_calls', []) if isinstance(message, dict) else getattr(message, 'tool_calls', [])
 
     def _tool_call_parts(self, tool_call):
-        if self.provider == 'groq':
+        if isinstance(tool_call, dict):
             function = tool_call.get('function', {})
             try:
                 arguments = json.loads(function.get('arguments') or '{}')

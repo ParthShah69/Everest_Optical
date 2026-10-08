@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div><h1 class="h3 mb-1">AI providers</h1><p class="text-muted mb-0">Admin managed keys are encrypted in the database. The assistant tries enabled providers in priority order.</p></div>
+</div>
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card shadow-sm"><div class="card-body">
+      <h2 class="h5">Add a provider</h2>
+      <form method="post" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="mb-3"><label class="form-label" for="provider">Provider</label><select id="provider" name="provider" class="form-select" required>
+          {% for item in supported_providers %}<option value="{{ item }}">{{ item|capitalize }}</option>{% endfor %}
+        </select></div>
+        <div class="mb-3"><label class="form-label" for="model">Model ID</label><input id="model" name="model" class="form-control" maxlength="120" required placeholder="Provider's current model ID"><div class="form-text">Use a model with tool calling support.</div></div>
+        <div class="mb-3"><label class="form-label" for="api_key">API key</label><input id="api_key" name="api_key" type="password" class="form-control" minlength="8" maxlength="512" required></div>
+        <div class="mb-3"><label class="form-label" for="priority">Priority</label><input id="priority" name="priority" type="number" class="form-control" min="1" max="999" value="100" required><div class="form-text">Lower numbers are tried first. If a provider reaches its limit, the next enabled provider is tried.</div></div>
+        <button type="submit" class="btn btn-primary">Save provider</button>
+      </form>
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm"><div class="card-body">
+      <h2 class="h5">Configured providers</h2>
+      {% if providers %}
+      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Priority</th><th>Provider</th><th>Model</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        {% for item in providers %}<tr>
+          <td>{{ item.priority }}</td><td>{{ item.provider|capitalize }}</td><td class="text-break">{{ item.model }}</td>
+          <td><span class="badge {{ 'bg-success' if item.enabled else 'bg-secondary' }}">{{ 'Enabled' if item.enabled else 'Disabled' }}</span></td>
+          <td class="d-flex gap-2">
+            <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="toggle"><input type="hidden" name="provider_id" value="{{ item.id }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Disable' if item.enabled else 'Enable' }}</button></form>
+            <form method="post" onsubmit="return confirm('Remove this provider key?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="remove"><input type="hidden" name="provider_id" value="{{ item.id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
+          </td>
+        </tr>{% endfor %}
+      </tbody></table></div>
+      {% else %}<p class="text-muted mb-0">No database managed providers yet.</p>{% endif %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

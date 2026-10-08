@@ -16,5 +16,6 @@ python-socketio>=5.11.0
 simple-websocket>=1.0.0
 ollama>=0.3.0
 requests>=2.31.0
+cryptography>=42.0.0
 faster-whisper>=1.0.0
 

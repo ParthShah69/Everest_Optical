@@ -23,7 +23,7 @@ import re
 import time
 import uuid
 
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, render_template, redirect, url_for, flash, session
 from flask_login import current_user, login_required
 
 try:
@@ -37,6 +37,10 @@ from extensions import socketio, db
 from services.ai_service import get_assistant
 from services.stt_service import STTService
 from models.chat_history import ChatMessage
+from models.ai_config import AIProviderConfig, AIPendingAction
+from services.ai_secrets import encrypt, decrypt
+from services.ai_service import _PROVIDER_URLS
+from datetime import datetime
 
 
 log = logging.getLogger(__name__)
@@ -89,8 +93,9 @@ def health():
     assistant = get_assistant()
     stt = STTService()
     cfg = current_app.config
+    active = assistant._configured_providers[0] if assistant._configured_providers else None
     has_groq_key = bool(cfg.get('GROQ_API_KEY'))
-    llm_available = assistant.is_available()
+    llm_available = assistant.is_available(probe=True)
 
     diagnostic = ""
     if not llm_available:
@@ -105,9 +110,9 @@ def health():
     return jsonify({
         "llm": {
             "available": llm_available,
-            "model": assistant.model,
-            "provider": assistant.provider,
-            "has_key": has_groq_key if assistant.provider == 'groq' else True,
+            "model": active['model'] if active else assistant.model,
+            "provider": active['provider'] if active else assistant.provider,
+            "has_key": bool(active and (active['provider'] == 'ollama' or active.get('api_key'))),
             "diagnostic": diagnostic,
         },
         "stt": {
@@ -158,7 +163,7 @@ def chat():
 
     assistant = get_assistant()
 
-    if not assistant.is_available():
+    if not assistant.is_available(probe=False):
         model = assistant.model
         provider = assistant.provider
         has_groq_key = bool(current_app.config.get('GROQ_API_KEY'))
@@ -192,6 +197,71 @@ def chat():
     except Exception as exc:
         log.exception("[AI Route] /chat error")
         return jsonify({"error": str(exc)}), 500
+
+
+@ai_bp.route('/actions/pending', methods=['GET'])
+@login_required
+def pending_action():
+    session_id = _session_id(request.args.get('session_id'))
+    if not session_id:
+        return jsonify({'error': 'Invalid chat session.'}), 400
+    action = (AIPendingAction.query.filter_by(user_id=current_user.id, session_id=session_id,
+                                               status='pending')
+              .filter(AIPendingAction.expires_at > datetime.utcnow())
+              .order_by(AIPendingAction.created_at.desc()).first())
+    return jsonify({'pending_action': action.public() if action else None})
+
+
+@ai_bp.route('/actions/<string:action_id>/<string:decision>', methods=['POST'])
+@login_required
+def decide_action(action_id, decision):
+    if decision not in {'approve', 'cancel'}:
+        return jsonify({'error': 'Invalid decision.'}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'JSON request required.'}), 400
+    action = AIPendingAction.query.filter_by(id=action_id, user_id=current_user.id).first()
+    if not action or action.status != 'pending':
+        return jsonify({'error': 'This approval is no longer available.'}), 409
+    if data.get('session_id') != action.session_id:
+        return jsonify({'error': 'Approval does not belong to this chat.'}), 403
+    if action.expires_at <= datetime.utcnow():
+        action.status = 'expired'
+        db.session.commit()
+        return jsonify({'error': 'This approval has expired. Ask the assistant again.'}), 410
+    if decision == 'cancel':
+        action.status = 'cancelled'
+        db.session.commit()
+        text = 'Cancelled. No changes were made.'
+        get_assistant()._save_message(action.session_id, current_user.id, 'assistant', text, action_type='cancel')
+        return jsonify({'text': text})
+    phrase = action.public().get('confirmation_phrase')
+    if action.critical and data.get('confirmation') != phrase:
+        return jsonify({'error': f'Type {phrase} to approve this critical change.'}), 400
+    # Claim once before execution. A retry or second tab cannot execute the tool twice.
+    claimed = (AIPendingAction.query.filter_by(id=action.id, user_id=current_user.id,
+                                                status='pending').update({'status': 'executing'}))
+    db.session.commit()
+    if claimed != 1:
+        return jsonify({'error': 'This approval is already being processed.'}), 409
+    try:
+        args = json.loads(decrypt(action.encrypted_args))
+        assistant = get_assistant()
+        result = json.loads(assistant._execute_tool(action.tool_name, args, approved=True))
+        action.status = 'completed' if result.get('success') else 'failed'
+        db.session.commit()
+        text = ('Approved and completed: ' if result.get('success') else 'The approved change failed: ') + (
+            action.summary if result.get('success') else str(result.get('error') or 'Unknown error'))
+        assistant._save_message(action.session_id, current_user.id, 'assistant', text,
+                                action_type='update' if result.get('success') else 'error')
+        return jsonify({'text': text, 'tool_calls': [{'name': action.tool_name, 'result': result}],
+                        'result': result}), 200 if result.get('success') else 422
+    except Exception:
+        log.exception('Approved AI action failed')
+        db.session.rollback()
+        action.status = 'failed'
+        db.session.commit()
+        return jsonify({'error': 'The approved change failed. No retry was attempted.'}), 500
 
 
 @ai_bp.route('/transcribe', methods=['POST'])
@@ -363,13 +433,15 @@ def update_config():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
+    if {'GROQ_API_KEY', 'AI_SARVAM_API_KEY'} & {str(key).upper() for key in data}:
+        return jsonify({'error': 'Manage provider keys from the admin AI Providers page.'}), 400
     allowed = {
         'AI_PROVIDER', 'AI_LLM_MODEL', 'AI_STT_BACKEND', 'AI_STT_MODEL_SIZE',
-        'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS', 'AI_SARVAM_API_KEY', 'GROQ_API_KEY'
+        'AI_DEFAULT_LANGUAGE', 'AI_MAX_TOOL_ITERATIONS'
     }
     updated = {}
     valid_backends = {'whisper_local', 'sarvam_api', 'groq_api', 'browser'}
-    valid_providers = {'ollama', 'groq'}
+    valid_providers = {'ollama', 'groq', 'gemini', 'openrouter', 'cerebras'}
     valid_model_sizes = {'tiny', 'base', 'small', 'medium', 'large-v3'}
     valid_languages = {'auto', 'en', 'hi', 'gu'}
     for key, val in data.items():
@@ -397,6 +469,52 @@ def update_config():
         updated[env_key] = val
 
     return jsonify({"updated": updated, "message": "Config updated for this session."})
+
+
+@ai_bp.route('/settings', methods=['GET', 'POST'])
+@login_required
+def provider_settings():
+    if not current_user.is_admin:
+        return jsonify({'error': 'Admin privileges required.'}), 403
+    token = session.setdefault('ai_settings_csrf', uuid.uuid4().hex)
+    if request.method == 'POST':
+        if current_app.config.get('SECRET_KEY') == 'dev-secret-key-change-this':
+            flash('Set a private SECRET_KEY before saving provider credentials.', 'danger')
+            return redirect(url_for('ai.provider_settings'))
+        if request.form.get('csrf_token') != token:
+            return jsonify({'error': 'Invalid settings form.'}), 400
+        operation = request.form.get('operation', 'add')
+        if operation == 'remove':
+            row = db.session.get(AIProviderConfig, request.form.get('provider_id', type=int))
+            if row:
+                db.session.delete(row)
+                db.session.commit()
+                flash('AI provider removed.', 'success')
+        elif operation == 'toggle':
+            row = db.session.get(AIProviderConfig, request.form.get('provider_id', type=int))
+            if row:
+                row.enabled = not row.enabled
+                db.session.commit()
+                flash('AI provider status updated.', 'success')
+        else:
+            provider = request.form.get('provider', '').strip().lower()
+            model = request.form.get('model', '').strip()
+            api_key = request.form.get('api_key', '').strip()
+            if provider not in _PROVIDER_URLS or not (1 <= len(model) <= 120) or not (8 <= len(api_key) <= 512):
+                flash('Choose a supported provider, model, and valid API key.', 'danger')
+                return redirect(url_for('ai.provider_settings'))
+            try:
+                priority = min(max(int(request.form.get('priority', 100)), 1), 999)
+            except (TypeError, ValueError):
+                priority = 100
+            db.session.add(AIProviderConfig(provider=provider, model=model,
+                                            encrypted_key=encrypt(api_key), priority=priority))
+            db.session.commit()
+            flash('AI provider saved. Its key is stored encrypted.', 'success')
+        return redirect(url_for('ai.provider_settings'))
+    rows = AIProviderConfig.query.order_by(AIProviderConfig.priority, AIProviderConfig.id).all()
+    return render_template('ai/settings.html', providers=rows,
+                           supported_providers=sorted(_PROVIDER_URLS), csrf_token=token)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +575,7 @@ def on_chat_message(data):
 
     assistant = get_assistant()
 
-    if not assistant.is_available():
+    if not assistant.is_available(probe=False):
         model = current_app.config.get('AI_LLM_MODEL', 'qwen3:8b')
         offline_text = f"⚠️ AI offline. The configured model '{model}' is unavailable."
         assistant._save_message(session_id, current_user.id, 'user', user_message, original_text=user_message)

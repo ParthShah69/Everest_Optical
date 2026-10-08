@@ -1682,6 +1682,69 @@ def navigate_to_page(page_name: str, entity_id: int = None) -> str:
 
 
 # ===========================================================================
+# Approved deletion tools (the assistant service stages these before execution)
+# ===========================================================================
+
+def delete_customer(customer_id: int) -> str:
+    """Permanently delete a customer and their related orders, payments and prescriptions.
+
+    Args:
+        customer_id: Exact customer ID to delete after the operator approves.
+
+    Returns:
+        JSON outcome with the deleted customer's name.
+    """
+    _require_app_context()
+    if not current_user.is_authenticated or not current_user.is_admin:
+        return _err('Only admins can delete customers.')
+    customer = db.session.get(Customer, int(customer_id))
+    if not customer:
+        return _err('Customer no longer exists.')
+    try:
+        order_ids = [row[0] for row in db.session.query(Order.id).filter_by(customer_id=customer.id).all()]
+        if order_ids:
+            Payment.query.filter(Payment.order_id.in_(order_ids)).delete(synchronize_session=False)
+            OrderItem.query.filter(OrderItem.order_id.in_(order_ids)).delete(synchronize_session=False)
+            Order.query.filter(Order.id.in_(order_ids)).delete(synchronize_session=False)
+        Prescription.query.filter_by(customer_id=customer.id).delete(synchronize_session=False)
+        name = customer.name
+        db.session.delete(customer)
+        db.session.commit()
+        return _ok({'message': f'Customer {name} and related records deleted.', 'customer_id': customer_id})
+    except Exception as exc:
+        db.session.rollback()
+        log.exception('[Tool:delete_customer]')
+        return _err(str(exc))
+
+
+def delete_inventory_item(inventory_id: int) -> str:
+    """Permanently delete an inventory item while preserving past order lines.
+
+    Args:
+        inventory_id: Exact inventory ID to delete after the operator approves.
+
+    Returns:
+        JSON outcome with the deleted item's name.
+    """
+    _require_app_context()
+    if not current_user.is_authenticated or not current_user.is_admin:
+        return _err('Only admins can delete inventory items.')
+    item = db.session.get(Inventory, int(inventory_id))
+    if not item:
+        return _err('Inventory item no longer exists.')
+    try:
+        OrderItem.query.filter_by(inventory_id=item.id).update({'inventory_id': None}, synchronize_session=False)
+        name = item.display_name
+        db.session.delete(item)
+        db.session.commit()
+        return _ok({'message': f'Inventory item {name} deleted.', 'inventory_id': inventory_id})
+    except Exception as exc:
+        db.session.rollback()
+        log.exception('[Tool:delete_inventory_item]')
+        return _err(str(exc))
+
+
+# ===========================================================================
 # Tool registry — imported by ai_service.py
 # ===========================================================================
 TOOLS = [
@@ -1705,5 +1768,7 @@ TOOLS = [
     update_inventory_stock,
     get_dashboard_stats,
     create_user,
+    delete_customer,
+    delete_inventory_item,
     navigate_to_page,
 ]

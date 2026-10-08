@@ -64,6 +64,7 @@ def create_app(config_class=Config):
     from routes.export_routes import export_bp
     app.register_blueprint(export_bp)
     import models.chat_history
+    import models.ai_config
     import models.payment
     import models.sequence
     import models.tax_config
@@ -73,8 +74,8 @@ def create_app(config_class=Config):
         from flask_login import current_user
         if current_user.is_authenticated and current_user.is_admin:
             try:
-                from models.deletion_request import DeletionRequest
-                count = DeletionRequest.query.filter_by(status='Pending').count()
+                from services.pending_deletion_badge import pending_deletion_count
+                count = pending_deletion_count()
                 return dict(pending_deletion_count=count)
             except Exception:
                 return dict(pending_deletion_count=0)
