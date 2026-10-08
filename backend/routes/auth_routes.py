@@ -1,4 +1,5 @@
 import random
+import secrets
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
@@ -209,7 +210,8 @@ def manage_users():
         return redirect(url_for('dashboard.index'))
     page = request.args.get('page', 1, type=int)
     users = User.query.order_by(User.created_at.desc()).paginate(page=page, per_page=20)
-    return render_template('auth/manage_users.html', users=users)
+    reset_token = session.setdefault('reset_database_csrf', secrets.token_urlsafe(32))
+    return render_template('auth/manage_users.html', users=users, reset_token=reset_token)
 
 
 @auth_bp.route('/users/add', methods=['POST'])
@@ -279,15 +281,28 @@ def edit_user(id):
     return redirect(url_for('auth.manage_users'))
 
 
-@auth_bp.route('/users/delete/<int:id>', methods=['POST'])
+@auth_bp.route('/users/delete/<int:id>', methods=['GET', 'POST'])
 @login_required
 def delete_user(id):
     if not _admin_required():
         return redirect(url_for('dashboard.index'))
 
-    user = User.query.get_or_404(id)
+    user = db.session.get(User, id)
+    if user is None:
+        flash('That user no longer exists.', 'info')
+        return redirect(url_for('auth.manage_users'))
     if user.id == current_user.id:
         flash('You cannot delete your own account.', 'warning')
+        return redirect(url_for('auth.manage_users'))
+
+    if request.method == 'GET':
+        token = secrets.token_urlsafe(32)
+        session[f'delete_user_{id}'] = token
+        return render_template('auth/confirm_delete_user.html', user=user, delete_token=token)
+
+    expected_token = session.pop(f'delete_user_{id}', None)
+    if not expected_token or not secrets.compare_digest(request.form.get('delete_token', ''), expected_token):
+        flash('Open the user review page and click Approve deletion first.', 'warning')
         return redirect(url_for('auth.manage_users'))
 
     username = user.username
@@ -403,10 +418,24 @@ def reset_database_route():
     if not _admin_required():
         return redirect(url_for('dashboard.index'))
 
+    if (not session.get('reset_database_csrf') or
+            not secrets.compare_digest(request.form.get('reset_token', ''), session['reset_database_csrf']) or
+            request.form.get('confirmation', '').strip() != 'RESET DATABASE' or
+            request.form.get('username', '').strip() != current_user.username):
+        flash('Database reset was not approved. Type RESET DATABASE and your username to continue.', 'warning')
+        return redirect(url_for('auth.manage_users'))
+    snapshot = {
+        'username': current_user.username, 'email': current_user.email,
+        'password_hash': current_user.password_hash, 'google_id': current_user.google_id,
+        'role': 'admin',
+    }
     try:
         from reset_db import reset_database
-        reset_database()
-        flash('Database reset successfully! All transactional data cleared, Super Admin account preserved.', 'success')
+        reset_database(snapshot)
+        logout_user()
+        session.pop('reset_database_csrf', None)
+        flash('Database reset completed. Your admin account was preserved. Sign in again.', 'success')
+        return redirect(url_for('auth.login'))
     except Exception as e:
         db.session.rollback()
         flash(f'Error resetting database: {str(e)}', 'danger')

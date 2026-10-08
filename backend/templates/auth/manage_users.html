@@ -50,7 +50,7 @@
             </div>
             <div class="card-body">
                 <p class="small text-muted mb-3">
-                    Reset transactional data (customers, orders, prescriptions, inventory, deletion requests, logs). The Super Admin account (admin / admin123) will be preserved.
+                    Reset all application data, including customers, orders, inventory, chat history and AI provider keys. Your current admin sign-in will be preserved.
                 </p>
                 <button type="button" class="btn btn-outline-danger w-100" data-bs-toggle="modal" data-bs-target="#resetDbModal">
                     <i class="fas fa-undo me-1"></i> Reset Database
@@ -64,18 +64,24 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <form action="{{ url_for('auth.reset_database_route') }}" method="POST">
+                    <input type="hidden" name="reset_token" value="{{ reset_token }}">
                     <div class="modal-header bg-danger text-white">
                         <h5 class="modal-title"><i class="fas fa-exclamation-triangle me-2"></i>Confirm Database Reset</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body text-start">
-                        <p class="text-danger fw-bold">Warning: This action will purge all test data from the system!</p>
+                        <p class="text-danger fw-bold">This permanently deletes application data. Confirm only if you intend to reset the entire database.</p>
                         <ul class="small text-muted">
                             <li>All Customers, Orders, & Prescriptions will be deleted.</li>
                             <li>All Inventory items will be deleted.</li>
                             <li>All non-admin Staff user accounts will be removed.</li>
-                            <li><strong>Super Admin (`admin`) will be preserved.</strong></li>
+                            <li>Chat history, AI keys, and settings will be deleted.</li>
+                            <li><strong>Your current admin account and sign-in credentials will be preserved.</strong></li>
                         </ul>
+                        <label class="form-label" for="reset-confirmation">Type RESET DATABASE</label>
+                        <input class="form-control mb-3" id="reset-confirmation" name="confirmation" autocomplete="off" required pattern="RESET DATABASE">
+                        <label class="form-label" for="reset-username">Type your username: {{ current_user.username }}</label>
+                        <input class="form-control" id="reset-username" name="username" autocomplete="off" required>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -136,12 +142,9 @@
                                             <i class="fas fa-edit"></i>
                                         </button>
                                         {% if user.id != current_user.id %}
-                                        <form action="{{ url_for('auth.delete_user', id=user.id) }}" method="POST"
-                                            onsubmit="return confirm('Delete user {{ user.username }}? Cannot be undone.');">
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                        <a href="{{ url_for('auth.delete_user', id=user.id) }}" class="btn btn-sm btn-outline-danger" aria-label="Review deletion of {{ user.username }}">
                                                 <i class="fas fa-trash"></i>
-                                            </button>
-                                        </form>
+                                        </a>
                                         {% endif %}
                                     </div>
                                 </td>
