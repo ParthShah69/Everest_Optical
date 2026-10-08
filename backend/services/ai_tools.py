@@ -94,6 +94,28 @@ def _money(val) -> Decimal:
     except Exception:
         return Decimal("0.00")
 
+def _money_input(val) -> Decimal | None:
+    """Parse user supplied currency without silently turning bad input into zero."""
+    try:
+        amount = Decimal(str(val))
+        if amount.is_finite():
+            return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        pass
+    return None
+
+def _paid_amount_expression():
+    """SQL expression matching Order.total_paid, including legacy advances."""
+    from sqlalchemy import case, func
+    receipt_totals = (
+        db.session.query(Payment.order_id,
+                         func.sum(Payment.amount).label('receipt_total'))
+        .group_by(Payment.order_id).subquery()
+    )
+    advance = func.coalesce(Order.advance_amount, 0)
+    receipts = func.coalesce(receipt_totals.c.receipt_total, 0)
+    return receipt_totals, case((receipts > advance, receipts), else_=advance)
+
 def _require_app_context():
     """Ensure we are inside a Flask application context."""
     from flask import current_app  # noqa: F401  (raises RuntimeError if not in context)
@@ -426,8 +448,15 @@ def create_order(
         if not customer:
             return _err(f"Customer ID {customer_id} not found. Search or create a customer first.")
 
-        if not items or len(items) == 0:
+        if not isinstance(items, list) or not items:
             return _err("An order needs at least one item. Please provide item details.")
+
+        if prescription_id is not None:
+            prescription = db.session.get(Prescription, int(prescription_id))
+            if not prescription or prescription.customer_id != customer.id:
+                return _err("Prescription must belong to the selected customer.")
+        if delivery_date and not _parse_date(delivery_date):
+            return _err("delivery_date must be a valid date or a supported date word.")
 
         if status not in VALID_STATUSES:
             return _err(f"Invalid status '{status}'. Choose from: {', '.join(VALID_STATUSES)}.")
@@ -435,8 +464,8 @@ def create_order(
             return _err(f"Invalid delivery_mode '{delivery_mode}'. Choose from: {', '.join(VALID_MODES)}.")
         if tax_mode not in VALID_TAX_MODES:
             return _err(f"Invalid tax_mode '{tax_mode}'. Choose from: {', '.join(sorted(VALID_TAX_MODES))}.")
-        tax_percent_dec = _money(tax_percent)
-        if not Decimal('0') <= tax_percent_dec <= Decimal('100'):
+        tax_percent_dec = _money_input(tax_percent)
+        if tax_percent_dec is None or not Decimal('0') <= tax_percent_dec <= Decimal('100'):
             return _err('tax_percent must be between 0 and 100.')
         if tax_mode != 'calculated':
             tax_percent_dec = Decimal('0.00')
@@ -445,15 +474,17 @@ def create_order(
         parsed_items = []
         subtotal = Decimal("0.00")
         for idx, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                return _err(f"Item {idx} must contain a description, quantity, and unit price.")
             desc  = str(item.get("description") or item.get("desc") or "").strip()
             qty   = int(item.get("quantity") or item.get("qty") or 0)
-            price = _money(item.get("unit_price") or item.get("price") or 0)
+            price = _money_input(item.get("unit_price") or item.get("price") or 0)
 
             if not desc:
                 return _err(f"Item {idx}: description is required.")
             if qty < 1:
                 return _err(f"Item {idx} '{desc}': quantity must be at least 1.")
-            if price <= 0:
+            if price is None or price <= 0:
                 return _err(f"Item {idx} '{desc}': unit price must be greater than 0.")
 
             inventory_id = item.get('inventory_id') or item.get('inventoryId')
@@ -470,8 +501,12 @@ def create_order(
             subtotal  += line_total
             parsed_items.append({"desc": desc, "qty": qty, "price": price, "inventory_id": inventory_id})
 
-        discount_dec     = _money(discount)
-        advance_dec      = _money(advance_amount)
+        discount_dec     = _money_input(discount)
+        advance_dec      = _money_input(advance_amount)
+        if discount_dec is None or discount_dec < 0 or discount_dec > subtotal:
+            return _err("Discount must be between zero and the order subtotal.")
+        if advance_dec is None or advance_dec < 0:
+            return _err("Advance amount cannot be negative.")
         taxable_subtotal = max(subtotal - discount_dec, Decimal("0.00"))
         tax_amount = _money(taxable_subtotal * tax_percent_dec / Decimal('100')) if tax_mode == 'calculated' else Decimal('0.00')
         total_amount = taxable_subtotal + tax_amount
@@ -660,13 +695,11 @@ def search_orders(
         if parsed_delivery:
             q = q.filter(Order.delivery_date.isnot(None), Order.delivery_date <= parsed_delivery)
 
-        # Remaining due considers split receipts as well as legacy advances, so
-        # it is calculated by the model property below rather than an unsafe
-        # SQL shortcut. Fetch a bounded candidate set before applying it.
-        orders = q.order_by(Order.created_at.desc()).limit(50 if due_only else limit).all()
-
         if due_only:
-            orders = [order for order in orders if float(order.remaining_due or 0) > 0][:limit]
+            receipt_totals, paid = _paid_amount_expression()
+            q = (q.outerjoin(receipt_totals, Order.id == receipt_totals.c.order_id)
+                 .filter(Order.total_amount > paid))
+        orders = q.order_by(Order.created_at.desc()).limit(limit).all()
 
         results = [
             {
@@ -717,10 +750,10 @@ def get_order_details(order_id: int = None, order_no: str = None) -> str:
         order = None
         if order_id is not None:
             order = db.session.get(Order, int(order_id))
-        if order is None and (order_no or "").strip():
+        if order is None and order_id is None and (order_no or "").strip():
             order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
-        if not order:
-            return _err("Order was not found.")
+        if not order or (order_no and order.order_no.lower() != order_no.strip().lower()):
+            return _err("Order was not found or its number did not match.")
 
         payments = [
             {
@@ -1071,19 +1104,25 @@ def add_inventory_item(
     if not location:
         return _err("Location (rack/drawer/shelf) is required.")
 
-    cost    = _money(cost_price)
-    selling = _money(selling_price)
+    cost    = _money_input(cost_price)
+    selling = _money_input(selling_price)
 
-    if cost <= 0:
+    if cost is None or cost <= 0:
         return _err("Cost price must be greater than 0.")
-    if selling <= 0:
+    if selling is None or selling <= 0:
         return _err("Selling price must be greater than 0.")
 
     warnings = []
     if cost > selling:
         warnings.append(f"Cost price ({cost}) is higher than selling price ({selling}). Please verify.")
 
-    qty = int(quantity) if quantity is not None else 0
+    try:
+        qty = int(quantity) if quantity is not None else 0
+        threshold = int(low_stock_threshold)
+    except (TypeError, ValueError):
+        return _err("Quantity and low stock threshold must be whole numbers.")
+    if qty < 0 or threshold < 0:
+        return _err("Quantity and low stock threshold cannot be negative.")
 
     try:
         item = Inventory(
@@ -1095,7 +1134,7 @@ def add_inventory_item(
             shop_branch=(shop_branch or "").strip() or None,
             cost_price=cost,
             selling_price=selling,
-            low_stock_threshold=int(low_stock_threshold),
+            low_stock_threshold=threshold,
             color_stock=(color_stock or "").strip() or None,
         )
         db.session.add(item)
@@ -1149,25 +1188,28 @@ def update_inventory_stock(inventory_id: int, quantity_change: int, reason: str 
         if not item:
             return _err(f"Inventory item ID {inventory_id} not found.")
 
-        new_qty = item.quantity + int(quantity_change)
+        change = int(quantity_change)
+        if change == 0:
+            return _err("Stock change must be nonzero.")
+        new_qty = (item.quantity or 0) + change
         if new_qty < 0:
             return _err(
                 f"Cannot reduce stock below zero. "
-                f"Current stock: {item.quantity}, reduction requested: {abs(quantity_change)}."
+                f"Current stock: {item.quantity}, reduction requested: {abs(change)}."
             )
 
         old_qty      = item.quantity
         item.quantity = new_qty
         db.session.commit()
 
-        direction = "added" if quantity_change > 0 else "removed"
+        direction = "added" if change > 0 else "removed"
         return _ok({
             "message": f"Stock {direction} for '{item.model_name}': {old_qty} → {new_qty}.",
             "item": {
                 "id": item.id,
                 "model": item.model_name,
                 "old_quantity": old_qty,
-                "quantity_change": quantity_change,
+                "quantity_change": change,
                 "new_quantity": new_qty,
                 "is_low_stock": item.is_low_stock,
             },
@@ -1204,6 +1246,11 @@ def get_dashboard_stats() -> str:
         total_revenue   = float(revenue_raw or 0)
         advance_raw     = db.session.query(sqlfunc.sum(Order.advance_amount)).scalar()
         total_advance   = float(advance_raw or 0)
+        receipt_totals, paid = _paid_amount_expression()
+        due_raw = (db.session.query(sqlfunc.sum(Order.total_amount - paid))
+                   .outerjoin(receipt_totals, Order.id == receipt_totals.c.order_id).scalar())
+        collected_raw = (db.session.query(sqlfunc.sum(paid))
+                         .outerjoin(receipt_totals, Order.id == receipt_totals.c.order_id).scalar())
 
         return _ok({
             "stats": {
@@ -1214,7 +1261,8 @@ def get_dashboard_stats() -> str:
                 "low_stock_items": low_stock,
                 "total_revenue": round(total_revenue, 2),
                 "total_advance_collected": round(total_advance, 2),
-                "outstanding_balance": round(total_revenue - total_advance, 2),
+                "total_collected": round(float(collected_raw or 0), 2),
+                "outstanding_balance": round(float(due_raw or 0), 2),
             }
         })
     except Exception as exc:
@@ -1240,12 +1288,8 @@ def create_user(username: str, password: str, role: str = "staff", email: str = 
         JSON with created user details (password is NOT returned)
     """
     _require_app_context()
-    # Role check (if authenticated user is logged in, ensure they are admin)
-    try:
-        if current_user and current_user.is_authenticated and not current_user.is_admin:
-            return _err("Only admins can create new users.")
-    except Exception:
-        pass
+    if not current_user.is_authenticated or not current_user.is_admin:
+        return _err("Only admins can create new users.")
 
     username = (username or "").strip()
     if not username:
@@ -1317,31 +1361,31 @@ def record_payment(
         return _err("Provide an order_id or order_no to record a payment.")
 
     try:
-        amt = float(amount or 0.0)
-        if amt <= 0:
+        amt = _money_input(amount)
+        if amt is None or amt <= 0:
             return _err("Payment amount must be greater than zero.")
 
         order = None
         if order_id is not None:
             order = db.session.get(Order, int(order_id))
-        if order is None and (order_no or "").strip():
+        else:
             order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
 
-        if not order:
-            return _err(f"Order '{order_id or order_no}' was not found.")
+        if not order or (order_no and order.order_no.lower() != order_no.strip().lower()):
+            return _err(f"Order '{order_id or order_no}' was not found or its number did not match.")
 
-        rem_due = float(order.remaining_due or 0.0)
-        if amt > rem_due + 0.01:
+        rem_due = _money(order.remaining_due or 0)
+        if amt > rem_due:
             return _err(
                 f"Payment amount of ₹{amt:.2f} exceeds the remaining balance of ₹{rem_due:.2f}."
             )
 
-        valid_methods = {"Cash", "UPI", "Card", "Paytm", "Bank"}
+        valid_methods = ("Cash", "UPI", "Card", "Paytm", "Bank")
         method_norm = payment_method.strip() if payment_method else "Cash"
-        for vm in valid_methods:
-            if vm.lower() == method_norm.lower():
-                method_norm = vm
-                break
+        method_norm = next((method for method in valid_methods
+                            if method.lower() == method_norm.lower()), None)
+        if method_norm is None:
+            return _err("Unsupported payment method. Choose Cash, UPI, Card, Paytm, or Bank.")
 
         receipt_number = get_next_number('RCP')
         user_id = None
@@ -1354,7 +1398,7 @@ def record_payment(
         payment = Payment(
             order_id=order.id,
             receipt_no=receipt_number,
-            amount=Decimal(str(amt)),
+            amount=amt,
             payment_method=method_norm,
             remark=(remark or "").strip() or None,
             payment_type=payment_type if payment_type in {"advance", "partial", "final"} else "partial",
@@ -1369,7 +1413,7 @@ def record_payment(
             "receipt_no": receipt_number,
             "order_no": order.order_no,
             "order_id": order.id,
-            "amount_paid": amt,
+            "amount_paid": float(amt),
             "remaining_due": new_due,
             "payment_method": method_norm,
             "navigate_to": f"/payments/receipt/{receipt_number}",
@@ -1587,11 +1631,11 @@ def get_order_document_links(order_id: int = None, order_no: str = None) -> str:
         order = None
         if order_id is not None:
             order = db.session.get(Order, int(order_id))
-        if order is None and (order_no or "").strip():
+        if order is None and order_id is None and (order_no or "").strip():
             order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
 
-        if not order:
-            return _err("Order was not found.")
+        if not order or (order_no and order.order_no.lower() != order_no.strip().lower()):
+            return _err("Order was not found or its number did not match.")
 
         receipts = [
             {
@@ -1701,11 +1745,11 @@ def delete_customer(customer_id: int) -> str:
     if not customer:
         return _err('Customer no longer exists.')
     try:
-        order_ids = [row[0] for row in db.session.query(Order.id).filter_by(customer_id=customer.id).all()]
-        if order_ids:
-            Payment.query.filter(Payment.order_id.in_(order_ids)).delete(synchronize_session=False)
-            OrderItem.query.filter(OrderItem.order_id.in_(order_ids)).delete(synchronize_session=False)
-            Order.query.filter(Order.id.in_(order_ids)).delete(synchronize_session=False)
+        from services.order_deletion import delete_order_records
+        for order in Order.query.filter_by(customer_id=customer.id).all():
+            delete_order_records(order)
+        # Flush order deletes before removing prescriptions referenced by them.
+        db.session.flush()
         Prescription.query.filter_by(customer_id=customer.id).delete(synchronize_session=False)
         name = customer.name
         db.session.delete(customer)
