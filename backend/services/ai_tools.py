@@ -1717,6 +1717,49 @@ def delete_customer(customer_id: int) -> str:
         return _err(str(exc))
 
 
+def delete_order(order_id: int = None, order_no: str = None,
+                 approval_snapshot: str = None) -> str:
+    """Permanently delete an exact order, its lines and payment receipts after approval.
+
+    Only admins can delete orders. A delivered order's stock is restored. The
+    assistant first shows an approval button; no deletion occurs before it is clicked.
+
+    Args:
+        order_id: Exact numeric order ID, if known.
+        order_no: Exact bill/order number, for example ORD-0001, if known.
+        approval_snapshot: Server-generated approval token for the reviewed order.
+
+    Returns:
+        JSON outcome with the deleted order number.
+    """
+    _require_app_context()
+    if not current_user.is_authenticated or not current_user.is_admin:
+        return _err('Only admins can delete orders.')
+    if order_id is None and not (order_no or '').strip():
+        return _err('Provide an exact order number or ID.')
+    try:
+        order = db.session.get(Order, int(order_id)) if order_id is not None else None
+    except (TypeError, ValueError):
+        return _err('The order ID must be a number.')
+    if order is None and order_id is None:
+        order = Order.query.filter(db.func.lower(Order.order_no) == order_no.strip().lower()).first()
+    if not order or (order_no and order.order_no.lower() != order_no.strip().lower()):
+        return _err('Order was not found or its number changed. No order was deleted.')
+    try:
+        from services.order_deletion import delete_order_records, order_deletion_fingerprint
+        if not approval_snapshot or approval_snapshot != order_deletion_fingerprint(order):
+            return _err('Order details changed after approval was requested. Review the order and ask to delete it again.')
+        deleted_id, deleted_no = order.id, order.order_no
+        delete_order_records(order)
+        db.session.commit()
+        return _ok({'message': f'Order #{deleted_no} deleted.', 'order_id': deleted_id,
+                    'order_no': deleted_no})
+    except Exception as exc:
+        db.session.rollback()
+        log.exception('[Tool:delete_order]')
+        return _err(str(exc))
+
+
 def delete_inventory_item(inventory_id: int) -> str:
     """Permanently delete an inventory item while preserving past order lines.
 
@@ -1769,6 +1812,7 @@ TOOLS = [
     get_dashboard_stats,
     create_user,
     delete_customer,
+    delete_order,
     delete_inventory_item,
     navigate_to_page,
 ]

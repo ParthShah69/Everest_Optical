@@ -13,9 +13,11 @@ from extensions import db, bcrypt
 from models.ai_config import AIProviderConfig, AIPendingAction
 from models.customer import Customer
 from models.inventory import Inventory
-from models.order import Order
+from models.order import Order, OrderItem
+from models.payment import Payment
 from models.user import User
-from services.ai_service import get_assistant, _safe_context_text, _cooldown_until
+from services.ai_service import get_assistant, _safe_context_text, _cooldown_until, AIProviderError
+from services.ai_tools import TOOLS
 from services.ai_secrets import decrypt, encrypt
 
 
@@ -111,6 +113,95 @@ class ApprovalAndSettingsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         with self.app.app_context():
             self.assertIsNone(db.session.get(Inventory, item_id))
+
+    def test_order_delete_is_available_to_ai_and_requires_approval(self):
+        self.assertIn('delete_order', {tool.__name__ for tool in TOOLS})
+        with self.app.app_context():
+            order = Order(order_no='ORD-APPROVE', customer_id=self.customer_id,
+                          total_amount=100, status='Pending')
+            db.session.add(order)
+            db.session.commit()
+            order_id = order.id
+            assistant = get_assistant()
+            with patch.object(assistant, '_complete', return_value={
+                'role': 'assistant', 'content': None,
+                'tool_calls': [{'id': 'delete-call', 'type': 'function', 'function': {
+                    'name': 'delete_order', 'arguments': '{"order_no":"ORD-APPROVE"}'}}],
+            }):
+                result = assistant._react_loop([], 'test-session', self.admin_id)
+            self.assertEqual(result['action'], 'pending_approval')
+            self.assertIn('ORD-APPROVE', result['pending_action']['summary'])
+            self.assertFalse(result['pending_action']['critical'])
+            self.assertIsNotNone(db.session.get(Order, order_id))
+            action_id = result['pending_action']['id']
+        response = self.client.post(f'/api/ai/actions/{action_id}/approve',
+                                    json={'session_id': 'test-session'})
+        self.assertEqual(response.status_code, 200)
+        with self.app.app_context():
+            self.assertIsNone(db.session.get(Order, order_id))
+        self.assertEqual(self.client.post(f'/api/ai/actions/{action_id}/approve',
+                                          json={'session_id': 'test-session'}).status_code, 409)
+
+    def test_paid_delivered_order_needs_typed_approval_and_restores_stock(self):
+        with self.app.app_context():
+            item = Inventory(model_name='Delivered Frame', location='A1',
+                             cost_price=10, selling_price=25, quantity=7)
+            order = Order(order_no='ORD-PAID', customer_id=self.customer_id,
+                          total_amount=100, status='Delivered')
+            db.session.add_all([item, order])
+            db.session.flush()
+            line = OrderItem(order_id=order.id, inventory_id=item.id, quantity=3, unit_price=25)
+            receipt = Payment(order_id=order.id, amount=50, payment_method='Cash')
+            db.session.add_all([line, receipt])
+            db.session.commit()
+            order_id, item_id, line_id, receipt_id = order.id, item.id, line.id, receipt.id
+            pending = get_assistant()._stage_action('delete_order', {'order_no': 'ORD-PAID'},
+                                                    'test-session', self.admin_id)
+            action_id = pending.id
+            self.assertTrue(pending.critical)
+            self.assertEqual(pending.public()['confirmation_phrase'], 'DELETE ORDER')
+            self.assertEqual(db.session.get(Inventory, item_id).quantity, 7)
+            self.assertIsNotNone(db.session.get(Payment, receipt_id))
+        url = f'/api/ai/actions/{action_id}/approve'
+        self.assertEqual(self.client.post(url, json={'session_id': 'test-session'}).status_code, 400)
+        with self.app.app_context():
+            self.assertIsNotNone(db.session.get(Order, order_id))
+        response = self.client.post(url, json={'session_id': 'test-session',
+                                               'confirmation': 'DELETE ORDER'})
+        self.assertEqual(response.status_code, 200)
+        with self.app.app_context():
+            self.assertIsNone(db.session.get(Order, order_id))
+            self.assertIsNone(db.session.get(OrderItem, line_id))
+            self.assertIsNone(db.session.get(Payment, receipt_id))
+            self.assertEqual(db.session.get(Inventory, item_id).quantity, 10)
+
+    def test_staff_cannot_stage_order_deletion(self):
+        with self.app.app_context():
+            order = Order(order_no='ORD-STAFF', customer_id=self.customer_id, total_amount=100)
+            db.session.add(order)
+            db.session.commit()
+            with self.assertRaisesRegex(AIProviderError, 'Only admins'):
+                get_assistant()._stage_action('delete_order', {'order_id': order.id},
+                                              'test-session', self.staff_id)
+            self.assertEqual(AIPendingAction.query.count(), 0)
+
+    def test_order_change_after_review_blocks_deletion(self):
+        with self.app.app_context():
+            order = Order(order_no='ORD-CHANGED', customer_id=self.customer_id,
+                          total_amount=100, status='Pending')
+            db.session.add(order)
+            db.session.commit()
+            order_id = order.id
+            pending = get_assistant()._stage_action('delete_order', {'order_id': order_id},
+                                                    'test-session', self.admin_id)
+            action_id = pending.id
+            order.status = 'Delivered'
+            db.session.commit()
+        response = self.client.post(f'/api/ai/actions/{action_id}/approve',
+                                    json={'session_id': 'test-session'})
+        self.assertEqual(response.status_code, 422)
+        with self.app.app_context():
+            self.assertIsNotNone(db.session.get(Order, order_id))
 
     def test_customer_with_orders_needs_typed_critical_confirmation(self):
         with self.app.app_context():

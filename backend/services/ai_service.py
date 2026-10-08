@@ -55,7 +55,7 @@ WRITE_TOOLS = frozenset({
     'create_customer', 'edit_customer', 'create_order', 'update_order_status',
     'record_payment', 'add_prescription', 'add_inventory_item',
     'update_inventory_stock', 'create_user',
-    'delete_customer', 'delete_inventory_item',
+    'delete_customer', 'delete_inventory_item', 'delete_order',
 })
 READ_TOOLS = frozenset({
     'search_customers', 'get_customer_details', 'get_customers_details',
@@ -202,6 +202,7 @@ CORE RULES:
 6. Respond in the SAME language/style the user uses (Hindi/Gujarati/English/mixed).
 7. For navigation requests ("show me", "open", "jao", "dikhao"), use navigate_to_page.
 8. For every creation, update, payment, stock change or deletion, an Approve button is mandatory. The server stages the exact tool call. Never say it is saved before approval.
+8a. Admins can delete an order with delete_order after identifying its exact order number or ID. The server shows its details and requires approval before deleting it. Never claim order deletion is unavailable.
 9. For prescription values: warn if SPH > ±20 or CYL > ±10; AXIS must be 0-180.
 10. Calculate all money server-side; never guess totals.
 11. If Ollama or a tool fails, say so clearly and offer manual navigation.
@@ -535,6 +536,36 @@ class AIAssistant:
             item = db.session.get(Inventory, int(args.get('inventory_id', 0)))
             if item:
                 summary = f'Delete inventory item {item.display_name} (ID {item.id}). Past order lines will remain.'
+        elif name == 'delete_order':
+            from models.order import Order
+            from models.payment import Payment
+            order_id = args.get('order_id')
+            order_no = str(args.get('order_no') or '').strip()
+            if order_id is None and not order_no:
+                raise AIProviderError('Provide an exact order number or ID before deleting an order.')
+            try:
+                order = db.session.get(Order, int(order_id)) if order_id is not None else None
+            except (TypeError, ValueError):
+                raise AIProviderError('The order ID must be a number.')
+            if order is None and order_id is None:
+                order = Order.query.filter(db.func.lower(Order.order_no) == order_no.lower()).first()
+            if not order or (order_no and order.order_no.lower() != order_no.lower()):
+                raise AIProviderError('That exact order was not found. Search orders and try again.')
+            from models.user import User
+            user = db.session.get(User, user_id)
+            if not user or not user.is_admin:
+                raise AIProviderError('Only admins can delete orders.')
+            receipts = Payment.query.filter_by(order_id=order.id).count()
+            customer_name = order.customer.name if order.customer else 'Unknown'
+            summary = (f'Delete order #{order.order_no} for {customer_name} '
+                       f'(status: {order.status}, total: ₹{order.total_amount}, '
+                       f'{len(order.items)} items, {receipts} payment receipts). '
+                       + ('Delivered stock will be restored. ' if order.status == 'Delivered' else '')
+                       + 'The order, its items and payment receipts will be permanently removed.')
+            critical = receipts > 0 or order.status == 'Delivered' or float(order.advance_amount or 0) > 0
+            from services.order_deletion import order_deletion_fingerprint
+            args = {'order_id': order.id, 'order_no': order.order_no,
+                    'approval_snapshot': order_deletion_fingerprint(order)}
         if len(summary) > 4000:
             raise AIProviderError('This change is too large to review at once. Split it into smaller actions.')
         pending = AIPendingAction(

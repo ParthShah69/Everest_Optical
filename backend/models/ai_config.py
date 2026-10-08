@@ -32,7 +32,12 @@ class AIPendingAction(db.Model):
                            default=lambda: datetime.utcnow() + timedelta(minutes=15))
 
     def public(self):
-        phrase = 'DELETE ALL' if self.tool_name in {'delete_all', 'reset_database'} else 'DELETE CUSTOMER'
+        phrase = {
+            'delete_all': 'DELETE ALL',
+            'reset_database': 'DELETE ALL',
+            'delete_customer': 'DELETE CUSTOMER',
+            'delete_order': 'DELETE ORDER',
+        }.get(self.tool_name, 'CONFIRM')
         return {
             'id': self.id, 'summary': self.summary, 'critical': self.critical,
             'tool_name': self.tool_name, 'confirmation_phrase': phrase if self.critical else None,
