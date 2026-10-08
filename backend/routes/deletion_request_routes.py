@@ -73,9 +73,12 @@ def approve(id):
         if req.entity_type == 'customer':
             customer = Customer.query.get(req.entity_id)
             if customer:
-                # Also delete associated prescriptions & orders if necessary
-                Order.query.filter_by(customer_id=customer.id).delete()
-                Prescription.query.filter_by(customer_id=customer.id).delete()
+                from services.order_deletion import delete_order_records
+                for order in Order.query.filter_by(customer_id=customer.id).all():
+                    delete_order_records(order)
+                db.session.flush()
+                for prescription in Prescription.query.filter_by(customer_id=customer.id).all():
+                    db.session.delete(prescription)
                 db.session.delete(customer)
         elif req.entity_type == 'order':
             order = Order.query.get(req.entity_id)
