@@ -10,10 +10,8 @@
     <!-- Preconnect to CDN origins to eliminate DNS + TCP latency on mobile -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-    <link rel="preconnect" href="https://cdn.socket.io" crossorigin>
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
-    <link rel="dns-prefetch" href="https://cdn.socket.io">
 
     <!-- Bootstrap CSS (render-blocking but small, needed for layout) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -110,6 +108,12 @@
                             <i class="fas fa-percent me-2"></i> GST Configuration
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {{ 'active' if request.endpoint == 'ai.provider_settings' else '' }}"
+                            href="{{ url_for('ai.provider_settings') }}">
+                            <i class="fas fa-robot me-2"></i> AI Providers
+                        </a>
+                    </li>
                 </ul>
                 {% endif %}
 
@@ -197,78 +201,9 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     {% if current_user.is_authenticated %}
-    <!-- Socket.IO & Chat Widget JS: lazy-loaded ONLY when the user interacts with the chat launcher.
-         This saves ~113 KB of JS parsing + a WebSocket connection on every page load,
-         improving mobile and desktop initial page load speeds significantly. -->
-    <script>
-    (function () {
-        'use strict';
-        var chatScriptsLoaded = false;
-        var chatScriptsLoading = false;
-        var callbacks = [];
-
-        function loadChatScripts(cb) {
-            if (chatScriptsLoaded) {
-                if (cb) cb();
-                return;
-            }
-            if (cb) callbacks.push(cb);
-            if (chatScriptsLoading) return;
-            chatScriptsLoading = true;
-
-            var sio = document.createElement('script');
-            sio.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
-            sio.onload = function () {
-                var widget = document.createElement('script');
-                widget.src = '{{ url_for("static", filename="js/chat_widget.js") }}';
-                widget.onload = function () {
-                    chatScriptsLoaded = true;
-                    chatScriptsLoading = false;
-                    while (callbacks.length) {
-                        var fn = callbacks.shift();
-                        try { fn(); } catch (e) { console.error(e); }
-                    }
-                };
-                widget.onerror = function () {
-                    chatScriptsLoading = false;
-                };
-                document.body.appendChild(widget);
-            };
-            sio.onerror = function () {
-                chatScriptsLoading = false;
-            };
-            document.body.appendChild(sio);
-        }
-
-        function onLauncherClick(e) {
-            if (!chatScriptsLoaded) {
-                e.preventDefault();
-                loadChatScripts(function () {
-                    if (window.openAiChat) {
-                        window.openAiChat(true);
-                    }
-                });
-            }
-        }
-
-        function setupLauncher() {
-            var launcher = document.getElementById('ai-chat-launcher');
-            if (launcher) {
-                // Preload silently on hover/touchstart/focus
-                ['mouseenter', 'touchstart', 'focus'].forEach(function (evt) {
-                    launcher.addEventListener(evt, function () { loadChatScripts(); }, { once: true, passive: true });
-                });
-                launcher.addEventListener('click', onLauncherClick);
-            }
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupLauncher);
-        } else {
-            setupLauncher();
-        }
-    })();
-    </script>
+    <!-- Load the small REST chat client after parsing. It must be present on every
+         page so a reply or an approval can be recovered after navigation. -->
+    <script defer src="{{ url_for('static', filename='js/chat_widget.js') }}"></script>
     {% endif %}
 
     <!-- Dark Mode JS -->

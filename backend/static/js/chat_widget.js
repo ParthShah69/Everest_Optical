@@ -12,6 +12,14 @@
     let sessionId = null;
     let storageKey = null;
     let sessionStorageKey = null;
+    let pendingRequestStorageKey = null;
+    let lastHistoryMessageId = 0;
+    let recoveryTimer = null;
+    let recoveryAttempts = 0;
+    let slowTimer = null;
+    let pendingAction = null;
+    let historyLoaded = false;
+    let autoRetryCount = 0;
 
     let isRecording = false;
     let mediaRecorder = null;
@@ -29,9 +37,12 @@
     function init() {
         initElements();
         initializeSessions();
-        checkHealth();
         bindEvents();
-        loadHistory();
+        // Most visits never open chat. Keep page navigation free of chat DB and
+        // provider health requests, while recovering an active cross-page job.
+        if (readPendingRequest()) {
+            loadHistory().then(() => { historyLoaded = true; loadPendingAction(); recoverPendingRequest(); });
+        }
     }
 
     if (document.readyState === 'loading') {
@@ -71,10 +82,10 @@
         const userId = root && root.dataset.chatUser ? root.dataset.chatUser : 'anonymous';
         storageKey = `ai_chat_sessions_${userId}`;
         sessionStorageKey = `ai_session_id_${userId}`;
+        pendingRequestStorageKey = `ai_chat_pending_${userId}`;
         sessionId = sessionStorage.getItem(sessionStorageKey) || newSessionId();
         sessionStorage.setItem(sessionStorageKey, sessionId);
         touchSession(sessionId);
-        renderSessionList();
     }
 
     function readSessions() {
@@ -167,7 +178,9 @@
     }
 
     function startNewChat() {
+        if (isThinking) return;
         sessionId = newSessionId();
+        pendingAction = null;
         sessionStorage.setItem(sessionStorageKey, sessionId);
         touchSession(sessionId);
         if (messagesContainer) messagesContainer.replaceChildren();
@@ -184,10 +197,13 @@
             return;
         }
         sessionId = id;
+        pendingAction = null;
         sessionStorage.setItem(sessionStorageKey, sessionId);
         toggleHistory(false);
         if (messagesContainer) messagesContainer.replaceChildren();
         await loadHistory();
+        await loadPendingAction();
+        recoverPendingRequest();
         renderSessionList();
         if (socket && socket.connected) socket.emit('join_session', { session_id: sessionId });
     }
@@ -247,7 +263,8 @@
             }
             // Serverless platforms use REST for chat. Only connect Socket.IO
             // after health confirms that the deployment explicitly supports it.
-            if (data.realtime && data.realtime.enabled) initSocket();
+            // REST works on both local and serverless deployments. Avoid a
+            // blocking third-party Socket.IO dependency for the chat widget.
         } catch (e) {
             if (statusDot) statusDot.classList.add('offline');
             if (statusBadge) statusBadge.classList.add('offline');
@@ -326,6 +343,35 @@
                 }
             });
         }
+
+        if (messagesContainer) {
+            messagesContainer.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-ai-action]');
+                if (!button || !pendingAction || button.dataset.actionId !== pendingAction.id) return;
+                if (button.dataset.aiAction === 'approve') {
+                    if (pendingAction.critical) showCriticalConfirmation();
+                    else submitPendingAction('approve');
+                } else if (button.dataset.aiAction === 'cancel') {
+                    submitPendingAction('cancel');
+                }
+            });
+        }
+        const criticalModal = document.getElementById('ai-critical-modal');
+        const criticalInput = document.getElementById('ai-critical-confirmation');
+        const criticalConfirm = document.getElementById('ai-critical-approve');
+        if (criticalInput && criticalConfirm) {
+            criticalInput.addEventListener('input', () => {
+                criticalConfirm.disabled = criticalInput.value.trim() !== (pendingAction && pendingAction.confirmation_phrase);
+            });
+            criticalConfirm.addEventListener('click', () => {
+                if (pendingAction && criticalInput.value.trim() === pendingAction.confirmation_phrase) {
+                    criticalModal.close();
+                    submitPendingAction('approve', pendingAction.confirmation_phrase);
+                }
+            });
+        }
+        const criticalCancel = document.getElementById('ai-critical-cancel');
+        if (criticalCancel) criticalCancel.addEventListener('click', () => criticalModal.close());
     }
 
     function toggleChatWindow(forceOpen) {
@@ -335,6 +381,11 @@
         if (shouldOpen) {
             chatWindow.classList.remove('hidden');
             if (launcher) launcher.setAttribute('aria-expanded', 'true');
+            if (!historyLoaded) {
+                historyLoaded = true;
+                loadHistory().then(() => { loadPendingAction(); recoverPendingRequest(); });
+                checkHealth();
+            }
             if (chatInput) chatInput.focus();
         } else {
             chatWindow.classList.add('hidden');
@@ -347,10 +398,13 @@
     window.openAiChat = (force) => toggleChatWindow(typeof force === 'boolean' ? force : true);
 
     async function loadHistory() {
+        const requestedSession = sessionId;
         try {
-            const res = await fetch(`/api/ai/history?session_id=${encodeURIComponent(sessionId)}&limit=20`);
+            const res = await fetch(`/api/ai/history?session_id=${encodeURIComponent(requestedSession)}&limit=30`, { cache: 'no-store' });
             if (res.ok) {
                 const data = await res.json();
+                if (requestedSession !== sessionId) return;
+                lastHistoryMessageId = Math.max(0, ...(data.messages || []).map(msg => Number(msg.id) || 0));
                 if (data.messages && data.messages.length > 0) {
                     messagesContainer.replaceChildren();
                     isLoadingHistory = true;
@@ -369,48 +423,202 @@
         }
     }
 
+    function readPendingRequest() {
+        try {
+            return JSON.parse(sessionStorage.getItem(pendingRequestStorageKey) || 'null');
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function clearPendingRequest(requestSession) {
+        const pending = readPendingRequest();
+        if (pending && pending.sessionId === requestSession) {
+            sessionStorage.removeItem(pendingRequestStorageKey);
+        }
+        if (recoveryTimer) window.clearTimeout(recoveryTimer);
+        recoveryTimer = null;
+        recoveryAttempts = 0;
+    }
+
+    function recoverPendingRequest() {
+        if (recoveryTimer) window.clearTimeout(recoveryTimer);
+        const pending = readPendingRequest();
+        if (!pending || pending.sessionId !== sessionId) return;
+        if (Date.now() - pending.startedAt > 120000) {
+            clearPendingRequest(sessionId);
+            appendMessage('system', 'The previous request did not finish. Please check the conversation before sending it again.');
+            return;
+        }
+        showTypingIndicator();
+        recoveryAttempts = 0;
+        pollPendingHistory(pending);
+    }
+
+    async function pollPendingHistory(pending) {
+        if (pending.sessionId !== sessionId) return;
+        try {
+            const response = await fetch(`/api/ai/history?session_id=${encodeURIComponent(pending.sessionId)}&limit=30`, { cache: 'no-store' });
+            if (response.ok) {
+                const data = await response.json();
+                const messages = data.messages || [];
+                const matchingUserIndex = messages.findIndex(msg => msg.role === 'user' && msg.content === pending.text &&
+                    (Number(msg.id) > pending.baselineId || Date.parse(msg.timestamp || '') >= pending.startedAt - 5000));
+                const completed = matchingUserIndex >= 0 && messages.slice(matchingUserIndex + 1).some(msg => msg.role === 'assistant');
+                if (completed) {
+                    clearPendingRequest(pending.sessionId);
+                    removeTypingIndicator();
+                    await loadHistory();
+                    await loadPendingAction();
+                    return;
+                }
+            }
+        } catch (err) {
+            console.debug('Waiting for previous chat response:', err);
+        }
+        recoveryAttempts += 1;
+        if (recoveryAttempts >= 40) {
+            clearPendingRequest(pending.sessionId);
+            removeTypingIndicator();
+            appendMessage('system', 'The previous request could not be confirmed. Please check history before trying again.');
+            return;
+        }
+        recoveryTimer = window.setTimeout(() => pollPendingHistory(pending), 2500);
+    }
+
+    async function loadPendingAction() {
+        const requestedSession = sessionId;
+        try {
+            const response = await fetch(`/api/ai/actions/pending?session_id=${encodeURIComponent(requestedSession)}`, { cache: 'no-store' });
+            if (!response.ok || requestedSession !== sessionId) return;
+            const data = await response.json();
+            setPendingAction(data.pending_action || null);
+        } catch (err) {
+            console.debug('Could not load pending approval:', err);
+        }
+    }
+
+    function setPendingAction(action) {
+        pendingAction = action && action.id ? action : null;
+        if (!messagesContainer) return;
+        messagesContainer.querySelectorAll('.ai-approval-card').forEach(card => card.remove());
+        if (!pendingAction) return;
+        const card = document.createElement('div');
+        card.className = 'ai-approval-card';
+        card.setAttribute('role', 'group');
+        card.setAttribute('aria-label', 'Action awaiting approval');
+        const heading = document.createElement('strong');
+        heading.textContent = pendingAction.critical ? 'Critical action requires approval' : 'Approve this change?';
+        const description = document.createElement('p');
+        description.textContent = pendingAction.summary || 'The assistant wants to change data.';
+        const buttons = document.createElement('div');
+        buttons.className = 'ai-approval-buttons';
+        for (const [name, label] of [['approve', 'Approve'], ['cancel', 'Cancel']]) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = name === 'approve' ? 'ai-approve-btn' : 'ai-cancel-btn';
+            button.dataset.aiAction = name;
+            button.dataset.actionId = pendingAction.id;
+            button.textContent = label;
+            buttons.appendChild(button);
+        }
+        card.append(heading, description, buttons);
+        messagesContainer.appendChild(card);
+        scrollToBottom();
+    }
+
+    function showCriticalConfirmation() {
+        const modal = document.getElementById('ai-critical-modal');
+        const input = document.getElementById('ai-critical-confirmation');
+        const description = document.getElementById('ai-critical-description');
+        if (!modal || !pendingAction) return;
+        description.textContent = pendingAction.summary || 'This change may affect a large amount of data.';
+        const phrase = pendingAction.confirmation_phrase || 'DELETE ALL';
+        document.getElementById('ai-critical-phrase').textContent = phrase;
+        input.setAttribute('aria-label', `Type ${phrase} to confirm`);
+        input.value = '';
+        document.getElementById('ai-critical-approve').disabled = true;
+        modal.showModal();
+        input.focus();
+    }
+
+    async function submitPendingAction(decision, confirmation) {
+        if (!pendingAction) return;
+        const action = pendingAction;
+        messagesContainer.querySelectorAll('.ai-approval-card button').forEach(button => button.disabled = true);
+        showTypingIndicator();
+        try {
+            const response = await fetch(`/api/ai/actions/${encodeURIComponent(action.id)}/${decision}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, ...(confirmation ? { confirmation } : {}) }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `Action failed (${response.status})`);
+            setPendingAction(null);
+            appendMessage('assistant', data.text || (decision === 'approve' ? 'Change approved.' : 'Change cancelled.'), { toolCalls: data.tool_calls || [] });
+            if (data.navigate_to) {
+                const target = new URL(data.navigate_to, window.location.href);
+                if (target.origin === window.location.origin) window.setTimeout(() => { window.location.href = target.href; }, 1200);
+            }
+        } catch (err) {
+            appendMessage('system', err.message || 'Could not complete the action. Please try again.');
+            setPendingAction(action);
+        } finally {
+            removeTypingIndicator();
+        }
+    }
+
     async function sendMessage(retryText) {
         const text = retryText || (chatInput.value || '').trim();
         if (!text || isThinking) return;
+        const requestSession = sessionId;
 
         if (!retryText) {
             appendMessage('user', text);
             chatInput.value = '';
         }
+        if (pendingRequestStorageKey) {
+            sessionStorage.setItem(pendingRequestStorageKey, JSON.stringify({
+                sessionId: requestSession, text, baselineId: lastHistoryMessageId,
+                startedAt: Date.now()
+            }));
+        }
         showTypingIndicator();
+        slowTimer = window.setTimeout(() => {
+            if (isThinking && statusText) statusText.textContent = 'Still working…';
+        }, 15000);
 
-        if (socket && socket.connected) {
-            socket.emit('chat_message', {
-                message: text,
-                session_id: sessionId
+        let deadlineTimer;
+        try {
+            const requestPromise = fetch('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ message: text, session_id: requestSession }),
+                keepalive: true,
             });
-        } else {
-            // REST Fallback
-            const controller = new AbortController();
-            const timeout = window.setTimeout(() => controller.abort(), 60000);
-            try {
-                const response = await fetch('/api/ai/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                    body: JSON.stringify({ message: text, session_id: sessionId }),
-                    signal: controller.signal,
-                });
-                const data = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(data.error || `Request failed (${response.status})`);
+            const deadline = new Promise((_, reject) => {
+                deadlineTimer = window.setTimeout(() => reject(new Error('Response is taking longer than expected. Checking saved conversation…')), 60000);
+            });
+            const response = await Promise.race([requestPromise, deadline]);
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+            clearPendingRequest(requestSession);
+            if (requestSession === sessionId) handleAssistantResponse(data, text);
+        } catch (err) {
+            // Keep the pending marker: a timed-out or interrupted request may
+            // still complete on the server. Poll history before allowing retry.
+            if (document.visibilityState !== 'hidden') {
+                if (requestSession === sessionId) {
+                    appendMessage('system', err.message || 'Connection interrupted. Checking saved conversation…');
+                    recoverPendingRequest();
                 }
-                handleAssistantResponse(data, text);
-            } catch (err) {
-                if (err.name === 'AbortError') {
-                    appendMessage('system', '⏳ The assistant is still processing — please wait a moment and try again.');
-                } else {
-                    appendMessage('system', err.message || '⚠️ Error sending message. Please try again.');
-                }
-                console.error(err);
-            } finally {
-                window.clearTimeout(timeout);
-                removeTypingIndicator();
             }
+            console.error(err);
+        } finally {
+            window.clearTimeout(slowTimer);
+            window.clearTimeout(deadlineTimer);
+            if (requestSession === sessionId) removeTypingIndicator();
         }
     }
 
@@ -419,6 +627,13 @@
 
         // Rate-limit pause with auto-retry countdown
         if (data.action === 'pause_and_continue' && data.is_rate_limited) {
+            if (!originalText || autoRetryCount >= 1) {
+                removeTypingIndicator();
+                autoRetryCount = 0;
+                appendMessage('system', `The provider is at its limit. Please try again in ${data.pause_seconds || 5} seconds.`);
+                return;
+            }
+            autoRetryCount += 1;
             const pauseSec = data.pause_seconds || 5;
             removeTypingIndicator();
             const bubble = document.createElement('div');
@@ -451,11 +666,14 @@
         }
 
         appendMessage('assistant', data.text || '', { toolCalls: data.tool_calls || [] });
+        autoRetryCount = 0;
+        if (data.pending_action) setPendingAction(data.pending_action);
 
         // Automatic page navigation if requested
-        if (data.navigate_to) {
+        if (data.navigate_to && !data.pending_action) {
             setTimeout(() => {
-                window.location.href = data.navigate_to;
+                const target = new URL(data.navigate_to, window.location.href);
+                if (target.origin === window.location.origin) window.location.href = target.href;
             }, 1200);
         }
     }

@@ -80,4 +80,14 @@
             </button>
         </div>
     </div>
+    <dialog id="ai-critical-modal" class="ai-critical-modal" aria-labelledby="ai-critical-title" aria-describedby="ai-critical-description">
+        <h2 id="ai-critical-title">Confirm critical change</h2>
+        <p id="ai-critical-description"></p>
+        <label for="ai-critical-confirmation">Type <strong id="ai-critical-phrase">DELETE ALL</strong> to approve this change</label>
+        <input id="ai-critical-confirmation" type="text" autocomplete="off" spellcheck="false" aria-label="Type the confirmation phrase">
+        <div class="ai-critical-actions">
+            <button type="button" id="ai-critical-cancel" class="ai-cancel-btn">Go back</button>
+            <button type="button" id="ai-critical-approve" class="ai-approve-btn" disabled>Approve critical change</button>
+        </div>
+    </dialog>
 </div>
