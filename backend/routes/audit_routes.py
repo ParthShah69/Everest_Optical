@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from models.audit_log import AuditLog
+from sqlalchemy.orm import joinedload
 
 audit_bp = Blueprint('audit', __name__, url_prefix='/audit')
 
@@ -19,6 +20,6 @@ def index():
     if table_filter:
         query = query.filter(AuditLog.table_name == table_filter)
         
-    logs = query.order_by(AuditLog.timestamp.desc()).paginate(page=page, per_page=20)
+    logs = query.options(joinedload(AuditLog.user)).order_by(AuditLog.timestamp.desc()).paginate(page=page, per_page=20)
     
     return render_template('audit/list.html', logs=logs, table_filter=table_filter)

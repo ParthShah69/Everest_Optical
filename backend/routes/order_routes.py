@@ -9,6 +9,7 @@ from models.sequence import get_next_number
 from models.tax_config import TaxConfig
 from services.whatsapp_service import get_whatsapp_url, format_order_confirmation, format_ready_notification
 from datetime import datetime, timedelta
+from sqlalchemy.orm import joinedload
 
 order_bp = Blueprint('order', __name__, url_prefix='/orders')
 
@@ -58,7 +59,7 @@ def index():
             (Customer.phone.ilike(f'%{search}%'))
         )
     
-    orders = query.order_by(Order.created_at.desc()).paginate(page=page, per_page=10)
+    orders = query.options(joinedload(Order.customer)).order_by(Order.created_at.desc()).paginate(page=page, per_page=10)
     return render_template('orders/list.html', orders=orders, 
                           status_filter=status_filter, search=search,
                           all_statuses=STATUS_CHOICES)
@@ -407,6 +408,8 @@ def delete(id):
         try:
             db.session.add(del_req)
             db.session.commit()
+            from services.pending_deletion_badge import invalidate_pending_deletion_count
+            invalidate_pending_deletion_count()
             flash(f'Deletion request for Order #{order.order_no} submitted to admin.', 'success')
         except Exception as e:
             db.session.rollback()

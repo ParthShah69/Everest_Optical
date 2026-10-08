@@ -232,6 +232,8 @@ def delete(id):
         try:
             db.session.add(del_req)
             db.session.commit()
+            from services.pending_deletion_badge import invalidate_pending_deletion_count
+            invalidate_pending_deletion_count()
             flash('Deletion request for prescription submitted to admin.', 'success')
         except Exception as e:
             db.session.rollback()

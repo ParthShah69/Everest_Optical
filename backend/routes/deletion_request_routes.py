@@ -6,6 +6,8 @@ from models.deletion_request import DeletionRequest
 from models.customer import Customer
 from models.order import Order
 from models.prescription import Prescription
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 deletion_request_bp = Blueprint('deletion_request', __name__, url_prefix='/deletion-requests')
 
@@ -31,13 +33,19 @@ def index():
     if status_filter != 'all':
         query = query.filter_by(status=status_filter)
 
-    requests = query.order_by(DeletionRequest.created_at.desc()).paginate(page=page, per_page=15)
+    requests = query.options(
+        joinedload(DeletionRequest.requested_by),
+        joinedload(DeletionRequest.reviewed_by),
+    ).order_by(DeletionRequest.created_at.desc()).paginate(page=page, per_page=15)
     
-    # Counts for tab badges
-    pending_count = DeletionRequest.query.filter_by(status='Pending').count()
-    approved_count = DeletionRequest.query.filter_by(status='Approved').count()
-    rejected_count = DeletionRequest.query.filter_by(status='Rejected').count()
-    total_count = DeletionRequest.query.count()
+    # One grouped query supplies all tab badges instead of four round trips.
+    status_counts = dict(db.session.query(
+        DeletionRequest.status, func.count(DeletionRequest.id)
+    ).group_by(DeletionRequest.status).all())
+    pending_count = status_counts.get('Pending', 0)
+    approved_count = status_counts.get('Approved', 0)
+    rejected_count = status_counts.get('Rejected', 0)
+    total_count = sum(status_counts.values())
 
     return render_template(
         'deletion_requests/list.html',
@@ -89,6 +97,8 @@ def approve(id):
         req.reviewed_at = datetime.utcnow()
 
         db.session.commit()
+        from services.pending_deletion_badge import invalidate_pending_deletion_count
+        invalidate_pending_deletion_count()
         flash(f'Deletion request #{req.id} for {req.entity_type.capitalize()} "{req.entity_identifier}" approved and deleted.', 'success')
     except Exception as e:
         db.session.rollback()
@@ -114,6 +124,8 @@ def reject(id):
         req.reviewed_at = datetime.utcnow()
 
         db.session.commit()
+        from services.pending_deletion_badge import invalidate_pending_deletion_count
+        invalidate_pending_deletion_count()
         flash(f'Deletion request #{req.id} for {req.entity_type.capitalize()} "{req.entity_identifier}" rejected.', 'info')
     except Exception as e:
         db.session.rollback()

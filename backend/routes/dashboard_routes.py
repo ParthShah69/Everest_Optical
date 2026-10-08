@@ -7,6 +7,7 @@ from models.inventory import Inventory
 from models.audit_log import AuditLog
 from models.payment import Payment
 from sqlalchemy import func, case
+from sqlalchemy.orm import joinedload
 from datetime import datetime, date, timedelta
 
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -88,8 +89,8 @@ def index():
     today_collection = float(today_collection_result or 0)
 
     # ── Query 5: Recent activity (small, lightweight) ─────────────────────────
-    recent_activity = AuditLog.query.order_by(AuditLog.timestamp.desc()).limit(5).all()
-    recent_orders   = Order.query.order_by(Order.created_at.desc()).limit(5).all()
+    recent_activity = AuditLog.query.options(joinedload(AuditLog.user)).order_by(AuditLog.timestamp.desc()).limit(5).all()
+    recent_orders   = Order.query.options(joinedload(Order.customer)).order_by(Order.created_at.desc()).limit(5).all()
 
     return render_template('dashboard/index.html',
                            user=current_user,
