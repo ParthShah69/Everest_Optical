@@ -18,6 +18,7 @@ Public interface:
 """
 
 import json
+import hashlib
 import inspect
 import logging
 import re
@@ -63,6 +64,7 @@ READ_TOOLS = frozenset({
     'get_tax_rates', 'get_low_stock_inventory', 'get_order_document_links',
     'search_inventory', 'get_dashboard_stats', 'navigate_to_page',
 })
+_GUARDED_DELETIONS = frozenset({'delete_customer', 'delete_inventory_item'})
 _PROVIDER_URLS = {
     'groq': 'https://api.groq.com/openai/v1',
     'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -163,13 +165,15 @@ def _openai_tools():
         param_docs = _parse_docstring_args(doc)
         properties = {}
         for name, parameter in signature.parameters.items():
+            if function.__name__ == 'delete_order' and name == 'approval_snapshot':
+                continue  # The server supplies this after showing the review.
             prop = _json_type(parameter.annotation)
             if name in param_docs:
                 prop["description"] = param_docs[name]
             properties[name] = prop
         required = [
             name for name, parameter in signature.parameters.items()
-            if parameter.default is inspect.Parameter.empty
+            if parameter.default is inspect.Parameter.empty and name in properties
         ]
         parameters = {"type": "object", "properties": properties}
         if required:
@@ -453,7 +457,13 @@ class AIAssistant:
                 log.info('[AI][iter=%s] Tool call: %s', iteration, fn_name)
 
                 if fn_name in {fn.__name__ for fn in TOOLS} and fn_name not in READ_TOOLS:
-                    pending = self._stage_action(fn_name, fn_args, session_id, user_id)
+                    try:
+                        pending = self._stage_action(fn_name, fn_args, session_id, user_id)
+                    except AIProviderError as exc:
+                        return {
+                            'text': str(exc), 'action': None, 'navigate_to': None,
+                            'tool_calls': tool_calls_made, 'error': 'action_not_ready',
+                        }
                     return {
                         'text': f"Please review and approve: {pending.summary}",
                         'action': 'pending_approval', 'navigate_to': None,
@@ -514,8 +524,20 @@ class AIAssistant:
             return json.dumps({"success": False, "error": str(exc)})
 
     def _stage_action(self, name, args, session_id, user_id):
+        tool_map = {fn.__name__: fn for fn in TOOLS}
+        if name not in WRITE_TOOLS or name not in tool_map:
+            raise AIProviderError('This action is not available for approval.')
         if not isinstance(args, dict):
             args = {}
+        try:
+            inspect.signature(tool_map[name]).bind(**args)
+        except TypeError as exc:
+            raise AIProviderError(f'Provide valid details for {name.replace("_", " ")} before approval.') from exc
+        if name in {'create_user', 'delete_customer', 'delete_inventory_item'}:
+            from models.user import User
+            user = db.session.get(User, user_id)
+            if not user or not user.is_admin:
+                raise AIProviderError('Only admins can approve this action.')
         # The name is validated against the known registry before staging.
         preview = {key: ('••••' if key in {'password', 'api_key', 'secret'} else value)
                    for key, value in args.items()}
@@ -531,11 +553,19 @@ class AIAssistant:
                 prescription_count = Prescription.query.filter_by(customer_id=customer.id).count()
                 summary = f'Delete customer {customer.name} (ID {customer.id}), {order_count} orders and {prescription_count} prescriptions.'
                 critical = order_count > 0 or prescription_count > 0
+            else:
+                raise AIProviderError('That customer was not found. Search customers and try again.')
         elif name == 'delete_inventory_item':
             from models.inventory import Inventory
             item = db.session.get(Inventory, int(args.get('inventory_id', 0)))
             if item:
-                summary = f'Delete inventory item {item.display_name} (ID {item.id}). Past order lines will remain.'
+                from models.order import OrderItem
+                linked_lines = OrderItem.query.filter_by(inventory_id=item.id).count()
+                summary = (f'Delete inventory item {item.display_name} (ID {item.id}, '
+                           f'{linked_lines} linked order lines). Their inventory link will be cleared; '
+                           'the order lines will remain.')
+            else:
+                raise AIProviderError('That inventory item was not found. Search inventory and try again.')
         elif name == 'delete_order':
             from models.order import Order
             from models.payment import Payment
@@ -568,6 +598,13 @@ class AIAssistant:
                     'approval_snapshot': order_deletion_fingerprint(order)}
         if len(summary) > 4000:
             raise AIProviderError('This change is too large to review at once. Split it into smaller actions.')
+        if name in _GUARDED_DELETIONS:
+            args = {**args, '_approval_guard': self._approval_guard(name, args)}
+        # The newest change request replaces an older, unapproved one in the
+        # same conversation so a hidden approval cannot be used later.
+        (AIPendingAction.query.filter_by(user_id=user_id, session_id=session_id,
+                                         status='pending')
+         .update({'status': 'superseded'}, synchronize_session=False))
         pending = AIPendingAction(
             id=str(uuid.uuid4()), user_id=user_id, session_id=session_id,
             tool_name=name, encrypted_args=encrypt(json.dumps(args, default=str)),
@@ -576,6 +613,49 @@ class AIAssistant:
         db.session.add(pending)
         db.session.commit()
         return pending
+
+    def _approval_guard(self, name, args):
+        """Fingerprint records a destructive tool would affect at approval time."""
+        if name == 'delete_customer':
+            from models.customer import Customer
+            from models.order import Order, OrderItem
+            from models.payment import Payment
+            from models.prescription import Prescription
+            customer = db.session.get(Customer, int(args.get('customer_id', 0)))
+            if not customer:
+                return None
+            orders = Order.query.filter_by(customer_id=customer.id).order_by(Order.id).all()
+            order_ids = [order.id for order in orders]
+            lines = (OrderItem.query.filter(OrderItem.order_id.in_(order_ids))
+                     .order_by(OrderItem.id).all()) if order_ids else []
+            payments = (Payment.query.filter(Payment.order_id.in_(order_ids))
+                        .order_by(Payment.id).all()) if order_ids else []
+            prescriptions = (Prescription.query.filter_by(customer_id=customer.id)
+                             .order_by(Prescription.id).all())
+            details = {'id': customer.id, 'name': customer.name,
+                       'orders': [(order.id, order.order_no, order.status,
+                                   str(order.total_amount), str(order.advance_amount))
+                                  for order in orders],
+                       'lines': [(line.id, line.order_id, line.inventory_id, line.quantity)
+                                 for line in lines],
+                       'payments': [(payment.id, payment.order_id, str(payment.amount))
+                                    for payment in payments],
+                       'prescriptions': [row.id for row in prescriptions]}
+        elif name == 'delete_inventory_item':
+            from models.inventory import Inventory
+            from models.order import OrderItem
+            item = db.session.get(Inventory, int(args.get('inventory_id', 0)))
+            if not item:
+                return None
+            lines = (OrderItem.query.filter_by(inventory_id=item.id)
+                     .order_by(OrderItem.id).all())
+            details = {'id': item.id, 'name': item.display_name,
+                       'quantity': item.quantity,
+                       'lines': [(line.id, line.order_id, line.quantity) for line in lines]}
+        else:
+            return None
+        payload = json.dumps(details, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
     def _rolling_summary(self, session_id, user_id, recent_rows):
         """Retain a short deterministic crux of turns outside the model window."""
@@ -702,14 +782,21 @@ class AIAssistant:
         return message.get('tool_calls', []) if isinstance(message, dict) else getattr(message, 'tool_calls', [])
 
     def _tool_call_parts(self, tool_call):
+        def parsed_arguments(value):
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, str):
+                try:
+                    parsed = json.loads(value or '{}')
+                    return parsed if isinstance(parsed, dict) else {}
+                except (TypeError, ValueError):
+                    return {}
+            return {}
+
         if isinstance(tool_call, dict):
             function = tool_call.get('function', {})
-            try:
-                arguments = json.loads(function.get('arguments') or '{}')
-            except (TypeError, ValueError):
-                arguments = {}
-            return function.get('name'), arguments, tool_call.get('id')
-        return tool_call.function.name, tool_call.function.arguments or {}, None
+            return function.get('name'), parsed_arguments(function.get('arguments')), tool_call.get('id')
+        return tool_call.function.name, parsed_arguments(tool_call.function.arguments), None
 
     # ------------------------------------------------------------------
     def _load_history(self, session_id: str, limit: int = 20) -> list:

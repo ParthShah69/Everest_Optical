@@ -230,8 +230,13 @@ def decide_action(action_id, decision):
         db.session.commit()
         return jsonify({'error': 'This approval has expired. Ask the assistant again.'}), 410
     if decision == 'cancel':
-        action.status = 'cancelled'
+        cancelled = (AIPendingAction.query.filter_by(id=action.id, user_id=current_user.id,
+                                                     status='pending')
+                     .filter(AIPendingAction.expires_at > datetime.utcnow())
+                     .update({'status': 'cancelled'}))
         db.session.commit()
+        if cancelled != 1:
+            return jsonify({'error': 'This approval is already being processed.'}), 409
         text = 'Cancelled. No changes were made.'
         get_assistant()._save_message(action.session_id, current_user.id, 'assistant', text, action_type='cancel')
         return jsonify({'text': text})
@@ -240,14 +245,24 @@ def decide_action(action_id, decision):
         return jsonify({'error': f'Type {phrase} to approve this critical change.'}), 400
     # Claim once before execution. A retry or second tab cannot execute the tool twice.
     claimed = (AIPendingAction.query.filter_by(id=action.id, user_id=current_user.id,
-                                                status='pending').update({'status': 'executing'}))
+                                                status='pending')
+               .filter(AIPendingAction.expires_at > datetime.utcnow())
+               .update({'status': 'executing'}))
     db.session.commit()
     if claimed != 1:
         return jsonify({'error': 'This approval is already being processed.'}), 409
     try:
         args = json.loads(decrypt(action.encrypted_args))
         assistant = get_assistant()
-        result = json.loads(assistant._execute_tool(action.tool_name, args, approved=True))
+        from services.ai_service import _GUARDED_DELETIONS
+        stale_review = False
+        if action.tool_name in _GUARDED_DELETIONS:
+            guard = args.pop('_approval_guard', None) if isinstance(args, dict) else None
+            stale_review = not guard or guard != assistant._approval_guard(action.tool_name, args)
+        if stale_review:
+            result = {'success': False, 'error': 'The records changed after review. Ask the assistant to prepare a new approval.'}
+        else:
+            result = json.loads(assistant._execute_tool(action.tool_name, args, approved=True))
         action.status = 'completed' if result.get('success') else 'failed'
         db.session.commit()
         text = ('Approved and completed: ' if result.get('success') else 'The approved change failed: ') + (
