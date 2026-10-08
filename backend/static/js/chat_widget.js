@@ -117,7 +117,7 @@
     }
 
     async function renderSessionList() {
-        if (!historyList) return;
+        if (!historyList || (historyPanel && historyPanel.classList.contains('hidden'))) return;
         historyList.replaceChildren();
         let sessions = readSessions();
         try {
@@ -180,6 +180,7 @@
     function startNewChat() {
         if (isThinking) return;
         sessionId = newSessionId();
+        lastHistoryMessageId = 0;
         pendingAction = null;
         sessionStorage.setItem(sessionStorageKey, sessionId);
         touchSession(sessionId);
@@ -196,7 +197,12 @@
             toggleHistory(false);
             return;
         }
+        // A request for the previous conversation can continue on the server;
+        // it must not leave this conversation's input locked while it finishes.
+        removeTypingIndicator();
+        if (chatInput) chatInput.disabled = false;
         sessionId = id;
+        lastHistoryMessageId = 0;
         pendingAction = null;
         sessionStorage.setItem(sessionStorageKey, sessionId);
         toggleHistory(false);
@@ -282,15 +288,13 @@
 
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
-                chatWindow.classList.add('hidden');
-                if (launcher) launcher.setAttribute('aria-expanded', 'false');
+                toggleChatWindow(false);
             });
         }
 
         if (minimizeBtn) {
             minimizeBtn.addEventListener('click', () => {
-                chatWindow.classList.add('hidden');
-                if (launcher) launcher.setAttribute('aria-expanded', 'false');
+                toggleChatWindow(false);
             });
         }
 
@@ -380,6 +384,7 @@
         const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : isHidden;
         if (shouldOpen) {
             chatWindow.classList.remove('hidden');
+            chatWindow.setAttribute('aria-hidden', 'false');
             if (launcher) launcher.setAttribute('aria-expanded', 'true');
             if (!historyLoaded) {
                 historyLoaded = true;
@@ -389,6 +394,7 @@
             if (chatInput) chatInput.focus();
         } else {
             chatWindow.classList.add('hidden');
+            chatWindow.setAttribute('aria-hidden', 'true');
             if (launcher) launcher.setAttribute('aria-expanded', 'false');
         }
     }
@@ -435,10 +441,10 @@
         const pending = readPendingRequest();
         if (pending && pending.sessionId === requestSession) {
             sessionStorage.removeItem(pendingRequestStorageKey);
+            if (recoveryTimer) window.clearTimeout(recoveryTimer);
+            recoveryTimer = null;
+            recoveryAttempts = 0;
         }
-        if (recoveryTimer) window.clearTimeout(recoveryTimer);
-        recoveryTimer = null;
-        recoveryAttempts = 0;
     }
 
     function recoverPendingRequest() {
@@ -447,6 +453,7 @@
         if (!pending || pending.sessionId !== sessionId) return;
         if (Date.now() - pending.startedAt > 120000) {
             clearPendingRequest(sessionId);
+            removeTypingIndicator();
             appendMessage('system', 'The previous request did not finish. Please check the conversation before sending it again.');
             return;
         }
@@ -492,6 +499,7 @@
             const response = await fetch(`/api/ai/actions/pending?session_id=${encodeURIComponent(requestedSession)}`, { cache: 'no-store' });
             if (!response.ok || requestedSession !== sessionId) return;
             const data = await response.json();
+            if (requestedSession !== sessionId) return;
             setPendingAction(data.pending_action || null);
         } catch (err) {
             console.debug('Could not load pending approval:', err);
@@ -545,16 +553,22 @@
     async function submitPendingAction(decision, confirmation) {
         if (!pendingAction) return;
         const action = pendingAction;
+        const requestSession = sessionId;
         messagesContainer.querySelectorAll('.ai-approval-card button').forEach(button => button.disabled = true);
         showTypingIndicator();
         try {
             const response = await fetch(`/api/ai/actions/${encodeURIComponent(action.id)}/${decision}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId, ...(confirmation ? { confirmation } : {}) }),
+                body: JSON.stringify({ session_id: requestSession, ...(confirmation ? { confirmation } : {}) }),
             });
             const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(data.error || `Action failed (${response.status})`);
+            if (!response.ok) {
+                const error = new Error(data.error || `Action failed (${response.status})`);
+                error.httpStatus = response.status;
+                throw error;
+            }
+            if (requestSession !== sessionId) return;
             setPendingAction(null);
             appendMessage('assistant', data.text || (decision === 'approve' ? 'Change approved.' : 'Change cancelled.'), { toolCalls: data.tool_calls || [] });
             if (data.navigate_to) {
@@ -562,10 +576,15 @@
                 if (target.origin === window.location.origin) window.setTimeout(() => { window.location.href = target.href; }, 1200);
             }
         } catch (err) {
-            appendMessage('system', err.message || 'Could not complete the action. Please try again.');
-            setPendingAction(action);
+            if (requestSession === sessionId) {
+                appendMessage('system', err.message || 'Could not complete the action. Please try again.');
+                // A server error can mean this action is already completed or
+                // failed. Refresh its authoritative state before offering it again.
+                if (err.httpStatus) await loadPendingAction();
+                else setPendingAction(action);
+            }
         } finally {
-            removeTypingIndicator();
+            if (requestSession === sessionId) removeTypingIndicator();
         }
     }
 
@@ -590,6 +609,8 @@
         }, 15000);
 
         let deadlineTimer;
+        let recovering = false;
+        let rejectedBeforeProcessing = false;
         try {
             const requestPromise = fetch('/api/ai/chat', {
                 method: 'POST',
@@ -602,27 +623,34 @@
             });
             const response = await Promise.race([requestPromise, deadline]);
             const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+            if (!response.ok) {
+                rejectedBeforeProcessing = response.status >= 400 && response.status < 500;
+                if (rejectedBeforeProcessing) clearPendingRequest(requestSession);
+                throw new Error(data.error || `Request failed (${response.status})`);
+            }
             clearPendingRequest(requestSession);
-            if (requestSession === sessionId) handleAssistantResponse(data, text);
+            if (requestSession === sessionId) handleAssistantResponse(data, text, requestSession);
         } catch (err) {
             // Keep the pending marker: a timed-out or interrupted request may
             // still complete on the server. Poll history before allowing retry.
             if (document.visibilityState !== 'hidden') {
                 if (requestSession === sessionId) {
-                    appendMessage('system', err.message || 'Connection interrupted. Checking saved conversation…');
-                    recoverPendingRequest();
+                    appendMessage('system', err.message || (rejectedBeforeProcessing ? 'The request was rejected.' : 'Connection interrupted. Checking saved conversation…'));
+                    if (!rejectedBeforeProcessing) {
+                        recoverPendingRequest();
+                        recovering = true;
+                    }
                 }
             }
             console.error(err);
         } finally {
             window.clearTimeout(slowTimer);
             window.clearTimeout(deadlineTimer);
-            if (requestSession === sessionId) removeTypingIndicator();
+            if (requestSession === sessionId && !recovering) removeTypingIndicator();
         }
     }
 
-    function handleAssistantResponse(data, originalText) {
+    function handleAssistantResponse(data, originalText, responseSession = sessionId) {
         if (!data) return;
 
         // Rate-limit pause with auto-retry countdown
@@ -654,7 +682,7 @@
                     clearInterval(tick);
                     bubble.remove();
                     if (chatInput) chatInput.disabled = false;
-                    if (originalText) sendMessage(originalText);
+                    if (originalText && responseSession === sessionId) sendMessage(originalText);
                 }
             }, 1000);
             return;
@@ -701,7 +729,7 @@
         }
 
         messagesContainer.appendChild(msgDiv);
-        if (role === 'user') {
+        if (role === 'user' && !isLoadingHistory) {
             const text = String(content || '').trim();
             const current = readSessions().find(item => item.id === sessionId);
             touchSession(sessionId, {
